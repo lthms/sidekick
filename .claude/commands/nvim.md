@@ -1,21 +1,22 @@
 INPUT: pid number (denoted by `$PID`)
 
-Create the following monitor:
+Create the following Monitor:
 
 ```
 while true; do curl -sN http://localhost:8000/listen/$PID || true; sleep 1; done
 ```
 
-This will give you one event per line, everytime i save a file in neovim
-(BufWritePost autocommand).
+/!\ You need to create a Monitor, NOT a Shell
 
-Search for the comment starting with `REQ:` in that file, and follow
-its instruction.
+This will give you one event per line, everytime i ping you from neovim.
+
+The event gives you a buffer number. Search for the comment starting with
+`REQ:` in that buffer, and follow its instruction.
 
 Golden rules:
 
-- Once you have read it, remove the `REQ:` comment. Do it as soon as possible,
-  to acknowledge to the user that you are starting thinking about the task
+- Once you have read it, replace the `REQ:` comment with a `RESP:` comment
+  acknowledging you started process the request. Do it as soon as possible.
 - Respect the scope of the request. DO NOT overdo.
 - ALWAYS prefer using the companion MCP instead of usual tools (Read, Write,
   Grep, Glob, etc.). Open new buffers if you need to.
