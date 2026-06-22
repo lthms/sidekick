@@ -39,7 +39,7 @@ func handleRegister(_ context.Context, p registerRequest, reg *registry) (regist
 	return registerResponse{Ok: true}, nil
 }
 
-func handleNotifyBufWrite(_ context.Context, p BufWritePostData, reg *registry) (any, *jsonrpc2.Error) {
+func handleNotify(_ context.Context, p BufWritePostData, reg *registry) (any, *jsonrpc2.Error) {
 	reg.notify(p.PID, p)
 
 	return nil, nil
@@ -48,7 +48,7 @@ func handleNotifyBufWrite(_ context.Context, p BufWritePostData, reg *registry) 
 func handleRPC(reg *registry) func(http.ResponseWriter, *http.Request) {
 	hs := new()
 	set(&hs, "register", handleRegister)
-	set(&hs, "notifyBufWrite", handleNotifyBufWrite)
+	set(&hs, "notify", handleNotify)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req jsonrpc2.Request

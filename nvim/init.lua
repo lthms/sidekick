@@ -57,9 +57,12 @@ local function on_start()
   vim.api.nvim_win_set_buf(0, prev_buf)
 end
 
-local function on_buf_write(event)
-  event.pid = vim.fn.getpid()
-  rpc_request("notifyBufWrite", event)
+local function on_buf_write()
+  local buf = vim.api.nvim_get_current_buf()
+  local file = vim.api.nvim_buf_get_name(buf)
+  local pid = vim.fn.getpid()
+  rpc_request("notify", {buf = buf, file = file, pid = pid} )
+  vim.print("Notification sent to Claude")
 end
 
 function M.setup()
@@ -68,9 +71,8 @@ function M.setup()
     group = group,
     callback = on_start,
   })
-  vim.api.nvim_create_autocmd("BufWritePost", {
-    group = group,
-    callback = on_buf_write,
+  vim.api.nvim_create_user_command("CompanionNotify", on_buf_write, {
+    desc = "Notify the companion server about the current buffer"
   })
 end
 
