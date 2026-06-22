@@ -41,7 +41,7 @@ local function on_start()
     vim.json.encode({
       mcpServers = {
         companion = {
-          type = "sse",
+          type = "http",
           url = SERVER_URL .. "/mcp/" .. pid,
         },
       },

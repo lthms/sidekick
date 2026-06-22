@@ -26,14 +26,13 @@ func main() {
 
 func newRPCHandler() http.Handler {
 	registry := newRegistry()
-	handleMCP := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
+	handleMCP := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		pid, _ := strconv.Atoi(r.PathValue("pid"))
 		return newMCPServer(registry, pid)
-	}, nil)
+	}, &mcp.StreamableHTTPOptions{Stateless: true})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /{$}", handleRPC(registry))
-	mux.Handle("GET /mcp/{pid}", handleMCP)
 	mux.Handle("POST /mcp/{pid}", handleMCP)
 	mux.HandleFunc("GET /listen/{pid}", handleListen(registry))
 
