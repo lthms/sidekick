@@ -40,6 +40,7 @@ func handleRegister(_ context.Context, p registerRequest, reg *registry) (regist
 }
 
 func handleNotify(_ context.Context, p BufWritePostData, reg *registry) (any, *jsonrpc2.Error) {
+	slog.Info("notified", "pid", p.PID, "file", p.File)
 	reg.notify(p.PID, p)
 
 	return nil, nil

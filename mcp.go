@@ -30,12 +30,12 @@ func newMCPServer(reg *registry, pid int) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "glob",
-		Description: "Find files by glob pattern, rooted at the neovim session's working directory. Patterns are matched against the path relative to that root: * and ? stay within a path segment, ** spans segments, and a leading \"**/\" matches zero or more directories (so \"**/*.go\" matches both main.go and src/foo.go). Replaces the Glob tool for the live session.",
+		Description: "List the session's opened (loaded, file-backed) buffers whose path matches a glob pattern. Paths are matched relative to the neovim session's working directory: * and ? stay within a path segment, ** spans segments, and a leading \"**/\" matches zero or more directories (so \"**/*.go\" matches both main.go and src/foo.go). Only opened buffers are considered — it does not walk the filesystem. Use open_buffer first to bring a file into scope.",
 	}, reg.glob(pid))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "grep",
-		Description: "Search file contents with a regular expression, rooted at the neovim session's working directory. Optionally restrict to files matching an include glob. Returns path:line:text. Replaces the Grep tool for the live session.",
+		Description: "Search the contents of the session's opened (loaded, file-backed) buffers with a regular expression. Optionally restrict to buffers whose path matches an include glob (relative to the session's working directory). Only opened buffers are searched — it does not walk the filesystem; use open_buffer first to bring a file into scope. Returns path:line:text.",
 	}, reg.grep(pid))
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -75,12 +75,12 @@ type WriteBufferInput struct {
 }
 
 type GlobInput struct {
-	Pattern string `json:"pattern" jsonschema:"glob pattern matched against paths relative to the session cwd; a leading **/ matches zero or more directories, so **/*.go matches main.go too. Examples: **/*.go, src/*.ts"`
+	Pattern string `json:"pattern" jsonschema:"glob matched against opened buffers' paths, relative to the session cwd; a leading **/ matches zero or more directories, so **/*.go matches main.go too. Examples: **/*.go, src/*.ts"`
 }
 
 type GrepInput struct {
 	Pattern string `json:"pattern" jsonschema:"regular expression to search for (RE2 syntax)"`
-	Include string `json:"include,omitempty" jsonschema:"optional glob restricting which files are searched; a leading **/ matches zero or more directories, so **/*.go also includes root-level files. Example: **/*.go"`
+	Include string `json:"include,omitempty" jsonschema:"optional glob restricting which opened buffers are searched, matched against their path relative to the session cwd; a leading **/ matches zero or more directories, so **/*.go also includes root-level files. Example: **/*.go"`
 }
 
 type ListBuffersInput struct{}
@@ -236,60 +236,90 @@ func globToRegexp(pattern string) (*regexp.Regexp, error) {
 	return regexp.Compile(b.String())
 }
 
-func skipDir(name string) bool {
-	switch name {
-	case ".git", "node_modules", ".direnv", "vendor":
-		return true
+// bufRef pairs a loaded neovim buffer with its path relative to the session cwd.
+type bufRef struct {
+	buf nvim.Buffer
+	rel string
+}
+
+// openBuffers returns the loaded buffers that are backed by a file, with each
+// name expressed relative to the session cwd. If include is non-nil, only
+// buffers whose relative path matches it are returned. These are the buffers
+// glob and grep operate over.
+func (reg *registry) openBuffers(v *nvim.Nvim, pid int, include *regexp.Regexp) ([]bufRef, error) {
+	root, err := reg.cwd(pid)
+	if err != nil {
+		return nil, err
 	}
-	return false
+
+	bufs, err := v.Buffers()
+	if err != nil {
+		return nil, fmt.Errorf("list buffers: %w", err)
+	}
+
+	var refs []bufRef
+	for _, buf := range bufs {
+		loaded, err := v.IsBufferLoaded(buf)
+		if err != nil {
+			return nil, fmt.Errorf("buffer %d loaded: %w", int(buf), err)
+		}
+		if !loaded {
+			continue
+		}
+
+		name, err := v.BufferName(buf)
+		if err != nil {
+			return nil, fmt.Errorf("name of buffer %d: %w", int(buf), err)
+		}
+		if name == "" {
+			continue
+		}
+
+		rel := name
+		if r, err := filepath.Rel(root, name); err == nil {
+			rel = r
+		}
+		if include != nil && !include.MatchString(rel) {
+			continue
+		}
+
+		refs = append(refs, bufRef{buf: buf, rel: rel})
+	}
+	return refs, nil
 }
 
 func (reg *registry) glob(pid int) mcp.ToolHandlerFor[GlobInput, any] {
 	return func(_ context.Context, _ *mcp.CallToolRequest, in GlobInput) (*mcp.CallToolResult, any, error) {
-		root, err := reg.cwd(pid)
-		if err != nil {
-			return nil, nil, err
-		}
-
 		re, err := globToRegexp(in.Pattern)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid pattern %q: %w", in.Pattern, err)
 		}
 
-		var matches []string
-		err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if d.IsDir() {
-				if path != root && skipDir(d.Name()) {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			rel, _ := filepath.Rel(root, path)
-			if re.MatchString(rel) {
-				matches = append(matches, rel)
-			}
-			return nil
-		})
+		v, err := reg.dial(pid)
 		if err != nil {
-			return nil, nil, fmt.Errorf("walk %s: %w", root, err)
+			return nil, nil, err
 		}
+		defer v.Close()
 
-		if len(matches) == 0 {
-			return textResult("no matches"), nil, nil
-		}
-		return textResult(strings.Join(matches, "\n")), nil, nil
-	}
-}
-func (reg *registry) grep(pid int) mcp.ToolHandlerFor[GrepInput, any] {
-	return func(_ context.Context, _ *mcp.CallToolRequest, in GrepInput) (*mcp.CallToolResult, any, error) {
-		root, err := reg.cwd(pid)
+		refs, err := reg.openBuffers(v, pid, re)
 		if err != nil {
 			return nil, nil, err
 		}
 
+		if len(refs) == 0 {
+			return textResult("no matches"), nil, nil
+		}
+
+		var matches []string
+		for _, ref := range refs {
+			matches = append(matches, ref.rel)
+		}
+		return textResult(strings.Join(matches, "\n")), nil, nil
+	}
+}
+
+func (reg *registry) grep(pid int) mcp.ToolHandlerFor[GrepInput, any] {
+	return func(_ context.Context, _ *mcp.CallToolRequest, in GrepInput) (*mcp.CallToolResult, any, error) {
 		re, err := regexp.Compile(in.Pattern)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid pattern %q: %w", in.Pattern, err)
@@ -303,39 +333,35 @@ func (reg *registry) grep(pid int) mcp.ToolHandlerFor[GrepInput, any] {
 			}
 		}
 
+		v, err := reg.dial(pid)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer v.Close()
+
+		refs, err := reg.openBuffers(v, pid, include)
+		if err != nil {
+			return nil, nil, err
+		}
+
 		const maxMatches = 500
 		var out []string
-		err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		for _, ref := range refs {
+			lines, err := v.BufferLines(ref.buf, 0, -1, true)
 			if err != nil {
-				return nil
+				return nil, nil, fmt.Errorf("read buffer %d: %w", int(ref.buf), err)
 			}
-			if d.IsDir() {
-				if path != root && skipDir(d.Name()) {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			rel, _ := filepath.Rel(root, path)
-			if include != nil && !include.MatchString(rel) {
-				return nil
-			}
-
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return nil
-			}
-			for n, line := range strings.Split(string(data), "\n") {
-				if re.MatchString(line) {
-					out = append(out, fmt.Sprintf("%s:%d:%s", rel, n+1, line))
+			for n, line := range lines {
+				if re.Match(line) {
+					out = append(out, fmt.Sprintf("%s:%d:%s", ref.rel, n+1, string(line)))
 					if len(out) >= maxMatches {
-						return filepath.SkipAll
+						break
 					}
 				}
 			}
-			return nil
-		})
-		if err != nil {
-			return nil, nil, fmt.Errorf("walk %s: %w", root, err)
+			if len(out) >= maxMatches {
+				break
+			}
 		}
 
 		if len(out) == 0 {
