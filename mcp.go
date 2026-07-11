@@ -438,6 +438,11 @@ func (reg *registry) openBuffer(pid int) mcp.ToolHandlerFor[OpenBufferInput, any
 		if err := v.Command(fmt.Sprintf("call bufload(%d)", bufnr)); err != nil {
 			return nil, nil, fmt.Errorf("bufload %d: %w", bufnr, err)
 		}
+		// Setting 'buflisted' so the buffer shows up in :ls and can be
+		// visited normally.
+		if err := v.Command(fmt.Sprintf("call setbufvar(%d, '&buflisted', 1)", bufnr)); err != nil {
+			return nil, nil, fmt.Errorf("set buflisted %d: %w", bufnr, err)
+		}
 
 		return textResult(fmt.Sprintf("buffer %d\t%s", bufnr, path)), nil, nil
 	}
