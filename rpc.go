@@ -24,9 +24,39 @@ func set[T any, U any](self *handlers, method string, fn func(context.Context, T
 	self.m[method] = typed(fn)
 }
 
-type registerRequest struct {
+type registerRequestShared struct {
+	PID    int             `json:"pid" validate:"required"`
+	Editor SupportedEditor `json:"editor" validate:"required"`
+}
+
+type nvimRegisterParams struct {
 	Endpoint string `json:"endpoint" validate:"required"`
-	PID      int    `JSON:"pid" validate:"required"`
+}
+
+type registerRequest struct {
+	PID    int
+	Server EditorMCPSever
+}
+
+func (req *registerRequest) UnmarshalJSON(data []byte) error {
+	var shrd registerRequestShared
+	if err := json.Unmarshal(data, &shrd); err != nil {
+		return err
+	}
+
+	req.PID = shrd.PID
+
+	switch shrd.Editor {
+	case Nvim:
+		var params nvimRegisterParams
+		if err := json.Unmarshal(data, &params); err != nil {
+			return err
+		}
+
+		req.Server = &NvimMCPServer{endpoint: params.Endpoint}
+	}
+
+	return nil
 }
 
 type registerResponse struct {
@@ -34,14 +64,37 @@ type registerResponse struct {
 }
 
 func handleRegister(_ context.Context, p registerRequest, reg *registry) (registerResponse, *jsonrpc2.Error) {
-	slog.Info("registered nvim RPC endpoint", "endpoint", p.Endpoint)
-	reg.remember(p.PID, p.Endpoint)
+	slog.Info("registered new editor", "pid", p.PID, "kind", p.Server.Kind())
+	reg.remember(p.PID, p.Server)
 	return registerResponse{Ok: true}, nil
 }
 
-func handleNotify(_ context.Context, p BufWritePostData, reg *registry) (any, *jsonrpc2.Error) {
-	slog.Info("notified", "pid", p.PID, "file", p.File)
-	reg.notify(p.PID, p)
+type notifyRequestShared struct {
+	PID int `json:"pid" validate:"required"`
+}
+
+type notifyRequest struct {
+	PID       int
+	rawParams []byte
+}
+
+func (r *notifyRequest) UnmarshalJSON(data []byte) error {
+	var shrd notifyRequestShared
+	if err := json.Unmarshal(data, &shrd); err != nil {
+		return err
+	}
+
+	r.PID = shrd.PID
+	r.rawParams = data
+
+	return nil
+}
+
+func handleNotify(_ context.Context, p notifyRequest, reg *registry) (any, *jsonrpc2.Error) {
+	slog.Info("received a notification to forward", "pid", p.PID)
+	mcp, _ := reg.mcp(p.PID)
+	payload, _ := mcp.UnmarshalNotifyJSONParams(p.rawParams)
+	reg.notify(p.PID, payload)
 
 	return nil, nil
 }

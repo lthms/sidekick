@@ -28,7 +28,8 @@ func newRPCHandler() http.Handler {
 	registry := newRegistry()
 	handleMCP := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		pid, _ := strconv.Atoi(r.PathValue("pid"))
-		return newMCPServer(registry, pid)
+		mcp, _ := registry.mcp(pid)
+		return mcp.NewMCPServer()
 	}, &mcp.StreamableHTTPOptions{Stateless: true})
 
 	mux := http.NewServeMux()

@@ -46,7 +46,7 @@ end
 local function on_start()
   local pid = vim.fn.getpid()
   local rpc_addr = vim.fn.serverstart("127.0.0.1:0")
-  rpc_request("register", { pid = pid, endpoint = rpc_addr })
+  rpc_request("register", { pid = pid, editor = "nvim", endpoint = rpc_addr })
 
   -- Generate an MCP config pointing this session's claude at the companion
   -- server's per-pid endpoint, served over SSE at /mcp/<pid>.

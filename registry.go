@@ -6,8 +6,8 @@ import (
 )
 
 type scope struct {
-	endpoint    string
 	broadcaster *broadcaster
+	mcp         EditorMCPSever
 }
 
 type registry struct {
@@ -18,18 +18,19 @@ func newRegistry() *registry {
 	return &registry{}
 }
 
-func (self *registry) remember(pid int, endpoint string) {
+func (self *registry) remember(pid int, mcp EditorMCPSever) {
 	broadcaster := newBroadcaster()
-	self.syncMap.Store(pid, scope{endpoint, broadcaster})
+
+	self.syncMap.Store(pid, scope{broadcaster, mcp})
 }
 
-func (self *registry) endpoint(pid int) (string, error) {
+func (self *registry) mcp(pid int) (EditorMCPSever, error) {
 	v, ok := self.syncMap.Load(pid)
 	if !ok {
-		return "", errors.New("no endpoint registered")
+		return nil, errors.New("no endpoint registered")
 	}
 	s := v.(scope)
-	return s.endpoint, nil
+	return s.mcp, nil
 }
 
 func (self *registry) listen(pid int) (*listener, func(), error) {
