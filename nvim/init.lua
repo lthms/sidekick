@@ -28,9 +28,22 @@ local function rpc_request(method, params)
   end)
 end
 
+local function spawn_terminal(mcp_config, pid)
+  vim.schedule(function()
+    -- Spawn a `claude` terminal in its own buffer, without stealing
+    -- focus. The buffer stays in the background; the user can select
+    -- it later.
+    local prev_buf = vim.api.nvim_get_current_buf()
+    local term_buf = vim.api.nvim_create_buf(true, false)
+    vim.api.nvim_win_set_buf(0, term_buf)
+    vim.fn.jobstart({ "claude", "--mcp-config", mcp_config, "--", "/nvim:monitor " .. pid }, { term = true })
+    vim.api.nvim_win_set_buf(0, prev_buf)
+    vim.print("Claude Code is running in its own buffer")
+  end)
+end
+
 local function on_start()
   local pid = vim.fn.getpid()
-  print(pid)
   local rpc_addr = vim.fn.serverstart("127.0.0.1:0")
   rpc_request("register", { pid = pid, endpoint = rpc_addr })
 
@@ -48,19 +61,21 @@ local function on_start()
     }),
   }, mcp_config)
 
-  local out = vim.system({ "claude", "plugin", "list", "--json" }, { text = true }):wait()
-  if not (out.stdout or ""):find('"nvim@companion"', 1, true) then
-    vim.system({ "claude", "plugin", "marketplace", "add", "lthms/companion#pluginify" }):wait()
-    vim.system({ "claude", "plugin", "install", "nvim@companion" }):wait()
-  end
-
-  -- Spawn a `claude` terminal in its own buffer, without stealing focus. The
-  -- buffer stays in the background; the user can select it later.
-  local prev_buf = vim.api.nvim_get_current_buf()
-  local term_buf = vim.api.nvim_create_buf(true, false)
-  vim.api.nvim_win_set_buf(0, term_buf)
-  vim.fn.jobstart({ "claude", "--mcp-config", mcp_config, "--", "/nvim:monitor " .. pid }, { term = true })
-  vim.api.nvim_win_set_buf(0, prev_buf)
+  -- Ensure the plugin is installed, then spawn — all without blocking startup.
+  vim.system({ "claude", "plugin", "list", "--json" }, { text = true }, function(list_out)
+    if (list_out.stdout or ""):find('"nvim@companion"', 1, true) then
+      spawn_terminal(mcp_config, pid)
+      return
+    end
+    vim.system({ "claude", "plugin", "marketplace", "add", "lthms/companion#pluginify" }, {}, function()
+      vim.system({ "claude", "plugin", "install", "nvim@companion" }, {}, function()
+          -- Spawning claude requires to use function not marked “fast” (see :h
+          -- api-fast). So we use vim.schedule to defer the function back to
+          -- the main loop, where they can be executed.
+          spawn_terminal(mcp_config, pid)
+      end)
+    end)
+  end)
 end
 
 local function on_buf_write()
