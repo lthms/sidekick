@@ -1,6 +1,6 @@
 local M = {}
 
-local SERVER_URL = "http://127.0.0.1:8000"
+M.config = {}
 
 local rpc_id = 0
 
@@ -18,7 +18,7 @@ local function rpc_request(method, params)
     "curl", "-sS", "-X", "POST",
     "-H", "Content-Type: application/json",
     "-d", body,
-    SERVER_URL,
+    M.config.server_url,
   }, { text = true }, function(out)
     if out.code ~= 0 then
       vim.schedule(function()
@@ -56,7 +56,7 @@ local function on_start()
       mcpServers = {
         companion = {
           type = "http",
-          url = SERVER_URL .. "/mcp/" .. pid,
+          url = M.config.server_url .. "/mcp/" .. pid,
         },
       },
     }),
@@ -68,14 +68,16 @@ local function on_start()
       spawn_terminal(mcp_config, pid)
       return
     end
-    vim.system({ "claude", "plugin", "marketplace", "add", "lthms/companion#pluginify" }, {}, function()
-      vim.system({ "claude", "plugin", "install", "nvim@companion" }, {}, function()
-          -- Spawning claude requires to use function not marked “fast” (see :h
-          -- api-fast). So we use vim.schedule to defer the function back to
-          -- the main loop, where they can be executed.
-          spawn_terminal(mcp_config, pid)
+    if M.config.claude.auto_install then
+      vim.system({ "claude", "plugin", "marketplace", "add", M.config.claude.marketplace.repo .. "#" .. M.config.claude.marketplace.ref }, {}, function()
+        vim.system({ "claude", "plugin", "install", "nvim@companion" }, {}, function()
+            -- Spawning claude requires to use function not marked “fast” (see :h
+            -- api-fast). So we use vim.schedule to defer the function back to
+            -- the main loop, where they can be executed.
+            spawn_terminal(mcp_config, pid)
+        end)
       end)
-    end)
+    end
   end)
 end
 
@@ -87,7 +89,19 @@ local function on_buf_write()
   vim.print("Notification sent to Claude")
 end
 
-function M.setup()
+local defaults = {
+  server_url = "http://127.0.0.1:8000",
+  claude = {
+    auto_install = true,
+    marketplace = {
+      repo = "lthms/companion",
+      ref = "main",
+    },
+  },
+}
+
+function M.setup(opts)
+  M.config = vim.tbl_deep_extend("force", {}, defaults, opts or {})
   local group = vim.api.nvim_create_augroup("Companion", { clear = true })
   vim.api.nvim_create_autocmd("VimEnter", {
     group = group,
