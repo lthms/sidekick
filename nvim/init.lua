@@ -30,15 +30,16 @@ end
 
 local function spawn_terminal(mcp_config, pid)
   vim.schedule(function()
-    -- Spawn a `claude` terminal in its own buffer, without stealing
-    -- focus. The buffer stays in the background; the user can select
-    -- it later.
-    local prev_buf = vim.api.nvim_get_current_buf()
+    -- Spawn a `claude` terminal in its own buffer. The buffer stays in the
+    -- background; the user can select it later.
     local term_buf = vim.api.nvim_create_buf(true, false)
-    vim.api.nvim_win_set_buf(0, term_buf)
-    vim.fn.jobstart({ "claude", "--mcp-config", mcp_config, "--", "/nvim:monitor " .. pid }, { term = true })
-    vim.api.nvim_win_set_buf(0, prev_buf)
-    vim.print("Claude Code is running in its own buffer")
+    vim.api.nvim_buf_call(term_buf, function()
+      vim.fn.jobstart(
+        { "claude", "--mcp-config", mcp_config, "--", "/nvim:monitor " .. pid },
+        { term = true }
+      )
+    end)
+    vim.print("Claude Code is running in buffer " .. term_buf)
   end)
 end
 
