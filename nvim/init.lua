@@ -48,12 +48,18 @@ local function on_start()
     }),
   }, mcp_config)
 
+  local out = vim.system({ "claude", "plugin", "list", "--json" }, { text = true }):wait()
+  if not (out.stdout or ""):find('"nvim@companion"', 1, true) then
+    vim.system({ "claude", "plugin", "marketplace", "add", "lthms/companion#pluginify" }):wait()
+    vim.system({ "claude", "plugin", "install", "nvim@companion" }):wait()
+  end
+
   -- Spawn a `claude` terminal in its own buffer, without stealing focus. The
   -- buffer stays in the background; the user can select it later.
   local prev_buf = vim.api.nvim_get_current_buf()
   local term_buf = vim.api.nvim_create_buf(true, false)
   vim.api.nvim_win_set_buf(0, term_buf)
-  vim.fn.jobstart({ "claude", "--mcp-config", mcp_config, "--", "/nvim " .. pid }, { term = true })
+  vim.fn.jobstart({ "claude", "--mcp-config", mcp_config, "--", "/nvim:monitor " .. pid }, { term = true })
   vim.api.nvim_win_set_buf(0, prev_buf)
 end
 
