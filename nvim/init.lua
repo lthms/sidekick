@@ -35,7 +35,7 @@ local function spawn_terminal(mcp_config, pid)
     local term_buf = vim.api.nvim_create_buf(true, false)
     vim.api.nvim_buf_call(term_buf, function()
       vim.fn.jobstart(
-        { "claude", "--mcp-config", mcp_config, "--", "/nvim:monitor " .. pid },
+        { "claude", "--mcp-config", mcp_config, "--", "/nvim:monitor " .. M.config.server_url .. " " .. pid },
         { term = true }
       )
     end)

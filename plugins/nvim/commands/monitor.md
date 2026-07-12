@@ -1,9 +1,9 @@
-INPUT: pid number (denoted by `$PID`)
+INPUT: $RPC_SERVER $PID
 
 Create the following Monitor:
 
 ```
-while true; do curl -sN http://localhost:8000/listen/$PID || true; sleep 1; done
+while true; do curl -sN $RPC_SERVER/listen/$PID || true; sleep 1; done
 ```
 
 /!\ You need to create a Monitor, NOT a Shell
