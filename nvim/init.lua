@@ -69,7 +69,13 @@ local function on_start()
       return
     end
     if M.config.claude.auto_install then
-      vim.system({ "claude", "plugin", "marketplace", "add", M.config.claude.marketplace.repo .. "#" .. M.config.claude.marketplace.ref }, {}, function()
+      local marketplace = ""
+      if M.config.claude.marketplace.path ~= nil then
+        marketplace = M.config.claude.marketplace.path
+      else
+        marketplace = M.config.claude.marketplace.repo .. "#" .. M.config.claude.marketplace.ref
+      end
+      vim.system({ "claude", "plugin", "marketplace", "add", marketplace }, {}, function()
         vim.system({ "claude", "plugin", "install", "nvim@companion" }, {}, function()
             -- Spawning claude requires to use function not marked “fast” (see :h
             -- api-fast). So we use vim.schedule to defer the function back to
@@ -94,6 +100,7 @@ local defaults = {
   claude = {
     auto_install = true,
     marketplace = {
+      path = nil,
       repo = "lthms/companion",
       ref = "main",
     },
