@@ -1,5 +1,5 @@
 {
   "name": "nvim",
-  "version": "0.1.0",
-  "description": "companion - drive Claude from your editor"
+  "version": "0.2.0",
+  "description": "companion - drive Claude from nvim"
 }
