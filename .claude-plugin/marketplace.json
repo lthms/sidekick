@@ -1,11 +1,11 @@
 {
-  "name": "companion",
+  "name": "sidekick",
   "owner": { "name": "Thomas Letan", "email": "lthms@soap.coffee" },
   "plugins": [
     {
       "name": "nvim",
       "source": "./plugins/nvim",
-      "description": "companion for neovim"
+      "description": "sidekick for neovim"
     }
   ]
 }

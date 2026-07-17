@@ -26,7 +26,7 @@ local function rpc_request(method, params)
   }, { text = true }, function(out)
     if out.code ~= 0 then
       vim.schedule(function()
-        vim.notify("companion: " .. method .. " failed: " .. (out.stderr or ""), vim.log.levels.WARN)
+        vim.notify("sidekick: " .. method .. " failed: " .. (out.stderr or ""), vim.log.levels.WARN)
       end)
     end
   end)
@@ -52,13 +52,13 @@ local function on_start()
   local rpc_addr = vim.fn.serverstart("127.0.0.1:0")
   rpc_request("register", { pid = pid, editor = "nvim", endpoint = rpc_addr })
 
-  -- Generate an MCP config pointing this session's claude at the companion
+  -- Generate an MCP config pointing this session's claude at the sidekick
   -- server's per-pid endpoint, served over SSE at /mcp/<pid>.
   local mcp_config = vim.fn.tempname()
   vim.fn.writefile({
     vim.json.encode({
       mcpServers = {
-        companion = {
+        sidekick = {
           type = "http",
           url = M.config.server_url .. "/mcp/" .. pid,
         },
@@ -68,7 +68,7 @@ local function on_start()
 
   -- Ensure the plugin is installed, then spawn — all without blocking startup.
   vim.system({ "claude", "plugin", "list", "--json" }, { text = true }, function(list_out)
-    if (list_out.stdout or ""):find('"nvim@companion"', 1, true) then
+    if (list_out.stdout or ""):find('"nvim@sidekick"', 1, true) then
       spawn_terminal(mcp_config, pid)
       return
     end
@@ -80,7 +80,7 @@ local function on_start()
         marketplace = M.config.claude.marketplace.repo .. "#" .. M.config.claude.marketplace.ref
       end
       vim.system({ "claude", "plugin", "marketplace", "add", marketplace }, {}, function()
-        vim.system({ "claude", "plugin", "install", "nvim@companion" }, {}, function()
+        vim.system({ "claude", "plugin", "install", "nvim@sidekick" }, {}, function()
             -- Spawning claude requires to use function not marked “fast” (see :h
             -- api-fast). So we use vim.schedule to defer the function back to
             -- the main loop, where they can be executed.
@@ -105,7 +105,7 @@ local defaults = {
     auto_install = true,
     marketplace = {
       path = nil,
-      repo = "lthms/companion",
+      repo = "lthms/sidekick",
       ref = "main",
     },
   },
@@ -113,13 +113,13 @@ local defaults = {
 
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", {}, defaults, opts or {})
-  local group = vim.api.nvim_create_augroup("Companion", { clear = true })
+  local group = vim.api.nvim_create_augroup("Sidekick", { clear = true })
   vim.api.nvim_create_autocmd("VimEnter", {
     group = group,
     callback = on_start,
   })
-  vim.api.nvim_create_user_command("CompanionNotify", on_buf_write, {
-    desc = "Notify the companion server about the current buffer"
+  vim.api.nvim_create_user_command("SidekickNotify", on_buf_write, {
+    desc = "Notify the sidekick server about the current buffer"
   })
 end
 

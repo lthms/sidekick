@@ -1,4 +1,4 @@
-module github.com/lthms/companion
+module github.com/lthms/sidekick
 
 go 1.25.0
 

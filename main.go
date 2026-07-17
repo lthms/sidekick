@@ -17,12 +17,12 @@ import (
 )
 
 var cli struct {
-	Port int `help:"Port to listen on." short:"p" default:"8000" env:"COMPANION_PORT"`
+	Port int `help:"Port to listen on." short:"p" default:"8000" env:"SIDEKICK_PORT"`
 }
 
 func main() {
-	kong.Parse(&cli, kong.Name("companion"),
-		kong.Description("companion daemon"))
+	kong.Parse(&cli, kong.Name("sidekick"),
+		kong.Description("sidekick daemon"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -30,7 +30,7 @@ func main() {
 	srv := &http.Server{Addr: fmt.Sprintf(":%d", cli.Port), Handler: newRPCHandler()}
 	context.AfterFunc(ctx, func() { _ = srv.Shutdown(context.Background()) })
 
-	slog.Info("companion server listening", "addr", srv.Addr)
+	slog.Info("sidekick server listening", "addr", srv.Addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("server stopped", "err", err)
 		os.Exit(1)

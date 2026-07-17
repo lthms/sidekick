@@ -466,7 +466,7 @@ func (self *NvimMCPServer) Kind() SupportedEditor {
 
 func (self *NvimMCPServer) NewMCPServer() *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
-		Name:    "companion for nvim",
+		Name:    "sidekick for nvim",
 		Version: "0.1.0",
 	}, nil)
 

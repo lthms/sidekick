@@ -18,9 +18,9 @@ Golden rules:
 - Once you have read it, replace the `REQ:` comment with a `RESP:` comment
   acknowledging you started process the request. Do it as soon as possible.
 - Respect the scope of the request. DO NOT overdo.
-- ALWAYS prefer using the companion MCP instead of usual tools (Read, Write,
+- ALWAYS prefer using the Sidekick MCP instead of usual tools (Read, Write,
   Grep, Glob, etc.). Open new buffers if you need to.
-- Save your changes (using the companion tool) if you need them to be reflected
+- Save your changes (using the Sidekick tool) if you need them to be reflected
   on disk (e.g., before building)
 
 Iterate over every `REQ:` comment this way.
