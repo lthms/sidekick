@@ -1,5 +1,7 @@
 # Sidekick
 
+<p align="center"><img src="sophie.png" alt="Turn Claude into your own sidekick" width="300px"></p>
+
 Drive Claude Code from your editor. Sidekick is a small daemon that bridges
 your editor and a `claude` session: you keep writing code, leave a request as a
 comment, and Claude answers in place.
