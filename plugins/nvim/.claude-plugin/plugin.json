@@ -1,5 +1,9 @@
 {
   "name": "nvim",
   "version": "0.2.0",
-  "description": "companion - drive Claude from nvim"
+  "description": "sidekick - drive Claude from nvim",
+  "author": {
+    "name": "Thomas Letan",
+    "email": "lthms@soap.coffee"
+  }
 }
