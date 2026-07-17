@@ -15,7 +15,12 @@ go build -o sidekick .
 
 ### Neovim
 
-Load the neovim plugin (see `plugins/nvim`) pointing at the same `server_url`.
+Install the Neovim plugin provided in this repository. For instance, with
+[lazy.nvim](https://github.com/folke/lazy.nvim):
+
+```lua
+{ "lthms/sidekick" }
+```
 
 After leaving a comment starting with `REQ:`, you can use `:SidekickNotify` to
 nudge the background Claude session to read it. Sidekick exposes a MCP server
