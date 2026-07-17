@@ -19,7 +19,11 @@ Install the Neovim plugin provided in this repository. For instance, with
 [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
-{ "lthms/sidekick" }
+{
+    "lthms/sidekick",
+    lazy = false,
+    opts = {},
+}
 ```
 
 After leaving a comment starting with `REQ:`, you can use `:SidekickNotify` to
