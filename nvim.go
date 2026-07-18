@@ -32,7 +32,7 @@ type ReadBufferInput struct {
 type WriteBufferInput struct {
 	Buffer   int    `json:"buffer" jsonschema:"the neovim buffer id to write"`
 	Start    *int   `json:"start,omitempty" jsonschema:"first line to replace, 1-based inclusive; omit to start at the top of the buffer"`
-	Previous string `json:"previous,omitempty" jsonschema:"the content currently expected at the replaced range, exactly as last read (lines separated by \\n). The write is rejected if the live buffer no longer matches it, and the replaced range length is derived from this. Omit to insert at start without removing any line"`
+	Previous string `json:"previous" jsonschema:"the content currently expected at the replaced range, exactly as last read (lines separated by \\n). The write is rejected if the live buffer no longer matches it, and the replaced range length is derived from this. Omit to insert at start without removing any line"`
 	Content  string `json:"content" jsonschema:"the replacement content; lines are separated by \\n"`
 }
 
@@ -490,8 +490,8 @@ func (self *NvimMCPServer) NewMCPServer() *mcp.Server {
 	}, self.readBuffer)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "write_buffer",
-		Description: "Write content into a neovim buffer, guarded against clobbering concurrent edits. Provide `previous` — the content you last read starting at `start` — and the write applies only if the live buffer still matches it there; otherwise it is rejected and you should re-read and retry. The replaced range length is derived from `previous` (omit `previous` to insert at `start` without removing anything). `start` is 1-based; omit it to start at the top. The buffer id is the \"buf\" field from /listen.",
+		Name:        "edit_buffer",
+		Description: "Edit content of a neovim buffer, guarded against clobbering concurrent edits. Replace `previous` at `start` with `content` — the write applies only if the live buffer still matches its previous content; otherwise it is rejected and you should re-read and retry. The replaced range length is derived from `previous`. `start` is 1-based; omit it to start at the top. The buffer id is the \"buf\" field from /listen.",
 	}, self.writeBuffer)
 
 	mcp.AddTool(server, &mcp.Tool{
