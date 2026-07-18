@@ -72,6 +72,10 @@ local function rpc_request(method, params)
 end
 
 local function spawn_terminal(mcp_config, pid)
+  -- Remember the last spawn arguments so restart_claude() can respawn without
+  -- re-running the full on_start() registration handshake.
+  M.state.mcp_config = mcp_config
+  M.state.pid = pid
   vim.schedule(function()
     -- Spawn a `claude` terminal in its own buffer. The buffer stays in the
     -- background; the user can select it later.
@@ -85,6 +89,26 @@ local function spawn_terminal(mcp_config, pid)
     end)
     vim.print("Claude Code is running in buffer " .. term_buf)
   end)
+end
+
+local function restart_claude()
+  -- Stop the running session, tear down its terminal buffer, then spawn a fresh
+  -- Claude session reusing the mcp config and pid captured at first spawn.
+  stop_claude()
+
+  local buf = M.state.claude_buff
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    -- force delete: the terminal job is still attached, so drop it too.
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  M.state.claude_buff = nil
+
+  if not M.state.mcp_config or not M.state.pid then
+    vim.print("No previous Claude session to restart")
+    return
+  end
+
+  spawn_terminal(M.state.mcp_config, M.state.pid)
 end
 
 local function on_start()
@@ -163,6 +187,9 @@ function M.setup(opts)
   })
   vim.api.nvim_create_user_command("SidekickInterrupt", stop_claude, {
     desc = "Interrupt the background Claude Code session"
+  })
+  vim.api.nvim_create_user_command("SidekickRestart", restart_claude, {
+    desc = "Restart the background Claude Code session from scratch"
   })
 end
 
