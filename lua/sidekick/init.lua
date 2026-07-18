@@ -83,7 +83,11 @@ local function spawn_terminal(mcp_config, pid)
     M.state.claude_buff = term_buf
     vim.api.nvim_buf_call(term_buf, function()
       vim.fn.jobstart(
-        { "claude", "--mcp-config", mcp_config, "--", "/nvim:monitor " .. M.config.server_url .. " " .. pid },
+        {
+          "claude", "--mcp-config", mcp_config,
+          "--allowedTools", "mcp__sidekick",
+          "--", "/nvim:monitor " .. M.config.server_url .. " " .. pid
+        },
         { term = true }
       )
     end)
