@@ -11,7 +11,7 @@ import (
 
 type scope struct {
 	broadcaster *broadcaster
-	mcp         EditorMCPSever
+	mcp         AppMCPSever
 }
 
 type registry struct {
@@ -22,13 +22,13 @@ func newRegistry() *registry {
 	return &registry{}
 }
 
-func (self *registry) remember(pid int, mcp EditorMCPSever) {
+func (self *registry) remember(pid int, mcp AppMCPSever) {
 	broadcaster := newBroadcaster()
 
 	self.syncMap.Store(pid, scope{broadcaster, mcp})
 }
 
-func (self *registry) mcp(pid int) (EditorMCPSever, error) {
+func (self *registry) mcp(pid int) (AppMCPSever, error) {
 	v, ok := self.syncMap.Load(pid)
 	if !ok {
 		return nil, errors.New("no endpoint registered")

@@ -29,8 +29,8 @@ func set[T any, U any](self *handlers, method string, fn func(context.Context, T
 }
 
 type registerRequestShared struct {
-	PID    int             `json:"pid" validate:"required"`
-	Editor SupportedEditor `json:"editor" validate:"required"`
+	PID int          `json:"pid" validate:"required"`
+	App SupportedApp `json:"app" validate:"required"`
 }
 
 type nvimRegisterParams struct {
@@ -39,7 +39,7 @@ type nvimRegisterParams struct {
 
 type registerRequest struct {
 	PID    int
-	Server EditorMCPSever
+	Server AppMCPSever
 }
 
 func (req *registerRequest) UnmarshalJSON(data []byte) error {
@@ -50,7 +50,7 @@ func (req *registerRequest) UnmarshalJSON(data []byte) error {
 
 	req.PID = shrd.PID
 
-	switch shrd.Editor {
+	switch shrd.App {
 	case Nvim:
 		var params nvimRegisterParams
 		if err := json.Unmarshal(data, &params); err != nil {
@@ -68,7 +68,7 @@ type registerResponse struct {
 }
 
 func handleRegister(_ context.Context, p registerRequest, reg *registry) (registerResponse, *jsonrpc2.Error) {
-	slog.Info("registered new editor", "pid", p.PID, "kind", p.Server.Kind())
+	slog.Info("registered new app", "pid", p.PID, "kind", p.Server.Kind())
 	reg.remember(p.PID, p.Server)
 	return registerResponse{Ok: true}, nil
 }

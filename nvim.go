@@ -474,7 +474,7 @@ func (self *NvimMCPServer) jump(_ context.Context, _ *mcp.CallToolRequest, in Ju
 	return textResult(fmt.Sprintf("jumped to buffer %d at %d:%d (<C-t> returns)", in.Buffer, in.Line, col)), nil, nil
 }
 
-func (self *NvimMCPServer) Kind() SupportedEditor {
+func (self *NvimMCPServer) Kind() SupportedApp {
 	return Nvim
 }
 

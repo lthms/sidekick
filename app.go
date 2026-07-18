@@ -11,38 +11,38 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-type SupportedEditor int
+type SupportedApp int
 
 const (
-	Nvim SupportedEditor = iota
+	Nvim SupportedApp = iota
 )
 
-func (e SupportedEditor) String() string {
+func (e SupportedApp) String() string {
 	switch e {
 	case Nvim:
 		return "nvim"
 	default:
-		return fmt.Sprintf("SupportedEditor(%d)", int(e))
+		return fmt.Sprintf("SupportedApp(%d)", int(e))
 	}
 }
 
-var encodings = map[string]SupportedEditor{"nvim": Nvim}
+var encodings = map[string]SupportedApp{"nvim": Nvim}
 
-func (e *SupportedEditor) UnmarshalJSON(data []byte) error {
+func (e *SupportedApp) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
 		return err
 	}
 	t, ok := encodings[s]
 	if !ok {
-		return fmt.Errorf("unknown editor: %q", s)
+		return fmt.Errorf("unknown app: %q", s)
 	}
 	*e = t
 	return nil
 }
 
-type EditorMCPSever interface {
-	Kind() SupportedEditor
+type AppMCPSever interface {
+	Kind() SupportedApp
 	NewMCPServer() *mcp.Server
 	UnmarshalNotifyJSONParams(data []byte) (any, error)
 }
