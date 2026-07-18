@@ -1,6 +1,6 @@
 {
   "name": "nvim",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "sidekick - drive Claude from nvim",
   "author": {
     "name": "Thomas Letan",

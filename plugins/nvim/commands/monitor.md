@@ -25,9 +25,14 @@ Golden rules:
 
 Iterate over every `REQ:` comment this way.
 
-Assume the user do not read your chat. To communicate, insert comments prefixed
-by `RESP:`. Prefer the active buffer Remember you can change the active buffer,
-so plan ahead.
+The chat is not read. Do NOT write explanations, summaries, status updates, or
+acknowledgements there. Your ONLY communication channel is `RESP:` comments in
+buffers. Emit chat text only when a tool call literally requires an
+accompanying message, and then keep it to a single short line. Everything you
+would normally say to the user — reasoning, findings, questions, confirmations
+— goes into a `RESP:` comment instead. Treat any urge to explain in the chat as
+a signal to write a `RESP:` comment instead. Prefer the active buffer; you can
+switch the active buffer, so plan ahead.
 
 If you are interrupted, abort what you were doing and consider the next REQ:
 you read to replace your previous assignment.
