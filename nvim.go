@@ -30,10 +30,10 @@ type ReadBufferInput struct {
 }
 
 type WriteBufferInput struct {
-	Buffer  int    `json:"buffer" jsonschema:"the neovim buffer id to write"`
-	Content string `json:"content" jsonschema:"the replacement content; lines are separated by \\n"`
-	Start   *int   `json:"start,omitempty" jsonschema:"first line to replace, 1-based inclusive; omit (with end) to replace the whole buffer"`
-	End     *int   `json:"end,omitempty" jsonschema:"last line to replace, 1-based inclusive; use start-1 to insert before start without removing any line"`
+	Buffer   int    `json:"buffer" jsonschema:"the neovim buffer id to write"`
+	Start    *int   `json:"start,omitempty" jsonschema:"first line to replace, 1-based inclusive; omit to start at the top of the buffer"`
+	Previous string `json:"previous,omitempty" jsonschema:"the content currently expected at the replaced range, exactly as last read (lines separated by \\n). The write is rejected if the live buffer no longer matches it, and the replaced range length is derived from this. Omit to insert at start without removing any line"`
+	Content  string `json:"content" jsonschema:"the replacement content; lines are separated by \\n"`
 }
 
 type GlobInput struct {
@@ -106,6 +106,16 @@ func (self *NvimMCPServer) readBuffer(_ context.Context, _ *mcp.CallToolRequest,
 	return textResult(b.String()), nil, nil
 }
 
+// splitContentLines splits tool content into buffer lines. A single trailing
+// newline marks the last line's EOL rather than an extra empty line, so strip
+// one before splitting; empty content is no lines at all.
+func splitContentLines(s string) []string {
+	if s == "" {
+		return []string{}
+	}
+	return strings.Split(strings.TrimSuffix(s, "\n"), "\n")
+}
+
 func (self *NvimMCPServer) writeBuffer(_ context.Context, _ *mcp.CallToolRequest, in WriteBufferInput) (*mcp.CallToolResult, any, error) {
 	v, err := self.dial()
 	if err != nil {
@@ -113,28 +123,26 @@ func (self *NvimMCPServer) writeBuffer(_ context.Context, _ *mcp.CallToolRequest
 	}
 	defer v.Close()
 
-	start, end := 0, -1
-	if in.Start != nil || in.End != nil {
-		if in.Start == nil || in.End == nil {
-			return nil, nil, fmt.Errorf("start and end must be provided together")
-		}
+	start := 0
+	if in.Start != nil {
 		start = max(*in.Start-1, 0)
-		end = *in.End
 	}
 
-	// Empty content deletes the range (or empties the buffer); otherwise split
-	// into lines. SetBufferLines treats a nil replacement as a deletion. A single
-	// trailing newline marks the last line's EOL rather than an extra empty line,
-	// so strip one before splitting — otherwise "A\nB\n" would yield three lines.
-	replacement := [][]byte{}
-	if in.Content != "" {
-		for l := range strings.SplitSeq(strings.TrimSuffix(in.Content, "\n"), "\n") {
-			replacement = append(replacement, []byte(l))
-		}
-	}
+	previous := splitContentLines(in.Previous)
+	replacement := splitContentLines(in.Content)
 
-	if err := v.SetBufferLines(nvim.Buffer(in.Buffer), start, end, true, replacement); err != nil {
+	// write_buf returns { ok = bool, reason? = string }; a false ok means the
+	// live buffer no longer matches `previous`, i.e. the range is stale.
+	var res struct {
+		Ok     bool   `msgpack:"ok"`
+		Reason string `msgpack:"reason"`
+	}
+	const write = `return require('sidekick').write_buf(...)`
+	if err := v.ExecLua(write, &res, in.Buffer, start, previous, replacement); err != nil {
 		return nil, nil, fmt.Errorf("write buffer %d: %w", in.Buffer, err)
+	}
+	if !res.Ok {
+		return nil, nil, fmt.Errorf("write buffer %d rejected: %s", in.Buffer, res.Reason)
 	}
 
 	return textResult(fmt.Sprintf("wrote %d lines to buffer %d", len(replacement), in.Buffer)), nil, nil
@@ -473,7 +481,7 @@ func (self *NvimMCPServer) Kind() SupportedEditor {
 func (self *NvimMCPServer) NewMCPServer() *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "sidekick for nvim",
-		Version: "0.1.0",
+		Version: "0.3.0",
 	}, nil)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -483,7 +491,7 @@ func (self *NvimMCPServer) NewMCPServer() *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "write_buffer",
-		Description: "Write content into a neovim buffer. With no line range, replaces the whole buffer; with start/end (1-based, inclusive), replaces only that range — set them equal to insert-replace a single line, or end = start-1 to insert without removing. The buffer id is the \"buf\" field from /listen.",
+		Description: "Write content into a neovim buffer, guarded against clobbering concurrent edits. Provide `previous` — the content you last read starting at `start` — and the write applies only if the live buffer still matches it there; otherwise it is rejected and you should re-read and retry. The replaced range length is derived from `previous` (omit `previous` to insert at `start` without removing anything). `start` is 1-based; omit it to start at the top. The buffer id is the \"buf\" field from /listen.",
 	}, self.writeBuffer)
 
 	mcp.AddTool(server, &mcp.Tool{

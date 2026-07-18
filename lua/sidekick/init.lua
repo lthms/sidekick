@@ -10,6 +10,24 @@ M.config = {}
 
 local rpc_id = 0
 
+function M.write_buf(buf, start, previous_content, new_content)
+  local stop = start + #previous_content
+  local current = vim.api.nvim_buf_get_lines(buf, start, stop, false)
+
+  if #current ~= #previous_content then
+    return { ok = false, reason = "range out of date: expected " ..
+      #previous_content .. " lines, found " .. #current }
+  end
+  for i = 1, #previous_content do
+    if current[i] ~= previous_content[i] then
+      return { ok = false, reason = "content changed at line " .. (start + i - 1) }
+    end
+  end
+
+  vim.api.nvim_buf_set_lines(buf, start, stop, false, new_content)
+  return { ok = true }
+end
+
 local function rpc_request(method, params)
   rpc_id = rpc_id + 1
 
