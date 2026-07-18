@@ -7,8 +7,27 @@
 local M = {}
 
 M.config = {}
+M.state = {}
 
 local rpc_id = 0
+
+local function stop_claude()
+  -- A terminal buffer exposes its PTY job as the buffer-local variable
+  -- `terminal_job_id`. Send the raw Ctrl-C byte (ETX, "\003") to that channel
+  local buf = M.state.claude_buff
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    vim.print("No Claude session to interrupt")
+    return
+  end
+
+  local ok, job = pcall(vim.api.nvim_buf_get_var, buf, "terminal_job_id")
+  if not ok or not job then
+    vim.print("No Claude session to interrupt")
+    return
+  end
+
+  vim.fn.chansend(job, "\003")
+end
 
 function M.write_buf(buf, start, previous_content, new_content)
   local stop = start + #previous_content
@@ -57,6 +76,7 @@ local function spawn_terminal(mcp_config, pid)
     -- Spawn a `claude` terminal in its own buffer. The buffer stays in the
     -- background; the user can select it later.
     local term_buf = vim.api.nvim_create_buf(true, false)
+    M.state.claude_buff = term_buf
     vim.api.nvim_buf_call(term_buf, function()
       vim.fn.jobstart(
         { "claude", "--mcp-config", mcp_config, "--", "/nvim:monitor " .. M.config.server_url .. " " .. pid },
@@ -140,6 +160,9 @@ function M.setup(opts)
   })
   vim.api.nvim_create_user_command("SidekickNotify", on_buf_write, {
     desc = "Notify the sidekick server about the current buffer"
+  })
+  vim.api.nvim_create_user_command("SidekickInterrupt", stop_claude, {
+    desc = "Interrupt the background Claude Code session"
   })
 end
 

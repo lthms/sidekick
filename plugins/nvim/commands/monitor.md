@@ -28,3 +28,6 @@ Iterate over every `REQ:` comment this way.
 Assume the user do not read your chat. To communicate, insert comments prefixed
 by `RESP:`. Prefer the active buffer Remember you can change the active buffer,
 so plan ahead.
+
+If you are interrupted, abort what you were doing and consider the next REQ:
+you read to replace your previous assignment.
