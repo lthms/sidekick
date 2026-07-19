@@ -37,6 +37,10 @@ type nvimRegisterParams struct {
 	Endpoint string `json:"endpoint" validate:"required"`
 }
 
+type kittyRegisterParams struct {
+	Socket string `json:"socket" validate:"required"`
+}
+
 type registerRequest struct {
 	PID    int
 	Server AppMCPSever
@@ -58,6 +62,13 @@ func (req *registerRequest) UnmarshalJSON(data []byte) error {
 		}
 
 		req.Server = &NvimMCPServer{endpoint: params.Endpoint}
+	case Kitty:
+		var params kittyRegisterParams
+		if err := json.Unmarshal(data, &params); err != nil {
+			return err
+		}
+
+		req.Server = &KittyMCPServer{socket: params.Socket}
 	}
 
 	return nil

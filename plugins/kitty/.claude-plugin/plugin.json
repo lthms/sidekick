@@ -1,0 +1,9 @@
+{
+  "name": "kitty",
+  "version": "0.1.0",
+  "description": "sidekick - drive Claude from kitty",
+  "author": {
+    "name": "Thomas Letan",
+    "email": "lthms@soap.coffee"
+  }
+}

@@ -15,18 +15,21 @@ type SupportedApp int
 
 const (
 	Nvim SupportedApp = iota
+	Kitty
 )
 
 func (e SupportedApp) String() string {
 	switch e {
 	case Nvim:
 		return "nvim"
+	case Kitty:
+		return "kitty"
 	default:
 		return fmt.Sprintf("SupportedApp(%d)", int(e))
 	}
 }
 
-var encodings = map[string]SupportedApp{"nvim": Nvim}
+var encodings = map[string]SupportedApp{"nvim": Nvim, "kitty": Kitty}
 
 func (e *SupportedApp) UnmarshalJSON(data []byte) error {
 	var s string
