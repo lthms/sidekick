@@ -6,6 +6,11 @@
       "name": "nvim",
       "source": "./plugins/nvim",
       "description": "sidekick for neovim"
+    },
+    {
+      "name": "kitty",
+      "source": "./plugins/kitty",
+      "description": "sidekick for kitty"
     }
   ]
 }
