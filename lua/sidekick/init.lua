@@ -5,8 +5,13 @@
 -- Maintainer: Thomas Letan <lthms@soap.coffee>
 
 local config = require("sidekick.config")
-local Claude = require("sidekick.claude")
 local Rpc = require("sidekick.rpc")
+
+-- Agents sidekick knows how to drive, keyed by the `backend` config value.
+local backends = {
+  claude = require("sidekick.claude"),
+  codex = require("sidekick.codex"),
+}
 
 local M = {}
 
@@ -36,14 +41,16 @@ local function on_start()
   local rpc_addr = vim.fn.serverstart("127.0.0.1:0")
   Rpc.new(M.config.server_url):request("register", { pid = pid, app = "nvim", endpoint = rpc_addr })
 
-  if M.config.backend == "claude" then
-    M.backend = Claude.new(M.config, pid)
-    M.backend:setup(function()
-      M.backend:spawn()
-    end)
-  else
+  local backend = backends[M.config.backend]
+  if backend == nil then
     vim.notify("sidekick: unknown backend " .. M.config.backend, vim.log.levels.ERROR)
+    return
   end
+
+  M.backend = backend.new(M.config, pid)
+  M.backend:setup(function()
+    M.backend:spawn()
+  end)
 end
 
 -- User commands run against the session spawned at VimEnter. Wrap them so a
@@ -51,7 +58,7 @@ end
 local function with_backend(f)
   return function(o)
     if M.backend == nil then
-      vim.notify("sidekick: no Claude session", vim.log.levels.WARN)
+      vim.notify("sidekick: no current session", vim.log.levels.WARN)
       return
     end
 

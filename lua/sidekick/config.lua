@@ -8,7 +8,7 @@ local M = {}
 
 M.defaults = {
   server_url = "http://127.0.0.1:8000",
-  backend = "claude",
+  backend = "codex",
   claude = {
     default_model = "opus",
     auto_install = true,
@@ -17,6 +17,11 @@ M.defaults = {
       repo = "lthms/sidekick",
       ref = "main",
     },
+  },
+  codex = {
+    -- nil: let codex pick its own default, instead of pinning an id that goes
+    -- stale (`model/list` is the source of truth, e.g. gpt-6-astra today).
+    default_model = nil,
   },
 }
 
