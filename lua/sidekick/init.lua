@@ -11,7 +11,7 @@ local Rpc = require("sidekick.rpc")
 local M = {}
 
 M.config = {}
-M.state = {}
+M.backend = nil
 
 function M.write_buf(buf, start, previous_content, new_content)
   local stop = start + #previous_content
@@ -36,30 +36,34 @@ local function on_start()
   local rpc_addr = vim.fn.serverstart("127.0.0.1:0")
   Rpc.new(M.config.server_url):request("register", { pid = pid, app = "nvim", endpoint = rpc_addr })
 
-  M.state.claude = Claude.new(M.config, pid)
-  M.state.claude:setup(function()
-    M.state.claude:spawn()
-  end)
+  if M.config.backend == "claude" then
+    M.backend = Claude.new(M.config, pid)
+    M.backend:setup(function()
+      M.backend:spawn()
+    end)
+  else
+    vim.notify("sidekick: unknown backend " .. M.config.backend, vim.log.levels.ERROR)
+  end
 end
 
 -- User commands run against the session spawned at VimEnter. Wrap them so a
 -- missing session is reported instead of erroring out.
-local function with_claude(f)
+local function with_backend(f)
   return function(o)
-    if M.state.claude == nil then
+    if M.backend == nil then
       vim.notify("sidekick: no Claude session", vim.log.levels.WARN)
       return
     end
 
-    f(M.state.claude, o)
+    f(M.backend, o)
   end
 end
 
-local function on_buf_write(claude)
+local function notify(backend)
   local buf = vim.api.nvim_get_current_buf()
   local file = vim.api.nvim_buf_get_name(buf)
   local pid = vim.fn.getpid()
-  claude:notify(buf, file, pid)
+  backend:notify(buf, file, pid)
 end
 
 function M.setup(opts)
@@ -69,24 +73,24 @@ function M.setup(opts)
     group = group,
     callback = on_start,
   })
-  vim.api.nvim_create_user_command("SidekickNotify", with_claude(on_buf_write), {
-    desc = "Notify the sidekick server about the current buffer"
+  vim.api.nvim_create_user_command("SidekickNotify", with_backend(notify), {
+    desc = "Notify the current session"
   })
-  vim.api.nvim_create_user_command("SidekickInterrupt", with_claude(function(claude)
-    claude:interrupt()
+  vim.api.nvim_create_user_command("SidekickInterrupt", with_backend(function(backend)
+    backend:interrupt()
   end), {
-    desc = "Interrupt the background Claude Code session"
+    desc = "Interrupt the current session"
   })
-  vim.api.nvim_create_user_command("SidekickRestart", with_claude(function(claude)
-    claude:restart()
+  vim.api.nvim_create_user_command("SidekickRestart", with_backend(function(backend)
+    backend:restart()
   end), {
-    desc = "Restart the background Claude Code session from scratch"
+    desc = "Restart the current session from scratch"
   })
-  vim.api.nvim_create_user_command("SidekickModel", with_claude(function(claude, o)
-    claude:change_model(o.args)
+  vim.api.nvim_create_user_command("SidekickModel", with_backend(function(backend, o)
+    backend:change_model(o.args)
   end), {
     nargs = "+",
-    desc = "Request a change of model for Claude"
+    desc = "Request a change of model"
   })
 end
 

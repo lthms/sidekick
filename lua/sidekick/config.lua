@@ -8,6 +8,7 @@ local M = {}
 
 M.defaults = {
   server_url = "http://127.0.0.1:8000",
+  backend = "claude",
   claude = {
     default_model = "opus",
     auto_install = true,
