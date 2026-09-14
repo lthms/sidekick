@@ -16,6 +16,7 @@ type SupportedApp int
 const (
 	Nvim SupportedApp = iota
 	Emacs
+	Vscode
 )
 
 func (e SupportedApp) String() string {
@@ -24,12 +25,14 @@ func (e SupportedApp) String() string {
 		return "nvim"
 	case Emacs:
 		return "emacs"
+	case Vscode:
+		return "vscode"
 	default:
 		return fmt.Sprintf("SupportedApp(%d)", int(e))
 	}
 }
 
-var encodings = map[string]SupportedApp{"nvim": Nvim, "emacs": Emacs}
+var encodings = map[string]SupportedApp{"nvim": Nvim, "emacs": Emacs, "vscode": Vscode}
 
 func (e *SupportedApp) UnmarshalJSON(data []byte) error {
 	var s string
