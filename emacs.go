@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -204,8 +205,9 @@ type emacsBufRef struct {
 
 // openBuffers returns the loaded, file-backed buffers, each name expressed
 // relative to the session cwd. If include is non-nil, only buffers whose
-// relative path matches it are returned. These are the buffers glob and grep
-// operate over.
+// relative path matches it are returned. glob and grep merge these with
+// projectFiles so open buffers' live contents take precedence over what's on
+// disk.
 func (self *EmacsMCPServer) openBuffers(include *regexp.Regexp) ([]emacsBufRef, error) {
 	root, err := self.cwd()
 	if err != nil {
@@ -239,6 +241,31 @@ func (self *EmacsMCPServer) openBuffers(include *regexp.Regexp) ([]emacsBufRef, 
 	return refs, nil
 }
 
+// projectFiles lists every file under the session root, relative to it,
+// backed by Emacs's own `project-files' (see the "project-files" op in
+// sidekick.el) rather than an external process — for a VC-backed project
+// that already honors .gitignore the same way Emacs itself does. If include
+// is non-nil, only matching relative paths are returned.
+func (self *EmacsMCPServer) projectFiles(include *regexp.Regexp) ([]string, error) {
+	var resp struct {
+		Files []string `json:"files"`
+	}
+	if err := self.call(emacsRequest{Op: "project-files"}, &resp); err != nil {
+		return nil, err
+	}
+
+	if include == nil {
+		return resp.Files, nil
+	}
+	var matched []string
+	for _, rel := range resp.Files {
+		if include.MatchString(filepath.ToSlash(rel)) {
+			matched = append(matched, rel)
+		}
+	}
+	return matched, nil
+}
+
 func (self *EmacsMCPServer) glob(_ context.Context, _ *mcp.CallToolRequest, in GlobInput) (*mcp.CallToolResult, any, error) {
 	re, err := globToRegexp(in.Pattern)
 	if err != nil {
@@ -250,14 +277,28 @@ func (self *EmacsMCPServer) glob(_ context.Context, _ *mcp.CallToolRequest, in G
 		return nil, nil, err
 	}
 
-	if len(refs) == 0 {
-		return textResult("no matches"), nil, nil
-	}
-
+	seen := make(map[string]bool, len(refs))
 	var matches []string
 	for _, ref := range refs {
+		seen[ref.rel] = true
 		matches = append(matches, ref.rel)
 	}
+
+	files, err := self.projectFiles(re)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list project files: %w", err)
+	}
+	for _, rel := range files {
+		if !seen[rel] {
+			seen[rel] = true
+			matches = append(matches, rel)
+		}
+	}
+
+	if len(matches) == 0 {
+		return textResult("no matches"), nil, nil
+	}
+	sort.Strings(matches)
 	return textResult(strings.Join(matches, "\n")), nil, nil
 }
 
@@ -280,23 +321,59 @@ func (self *EmacsMCPServer) grep(_ context.Context, _ *mcp.CallToolRequest, in G
 		return nil, nil, err
 	}
 
+	root, err := self.cwd()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	const maxMatches = 500
 	var out []string
+	// grepLines appends matches for one file's already-split lines and reports
+	// whether the cap was hit, so both the buffer and on-disk passes below can
+	// share the same accumulation and stop early.
+	grepLines := func(rel string, lines []string) (full bool) {
+		for n, line := range lines {
+			if re.MatchString(line) {
+				out = append(out, fmt.Sprintf("%s:%d:%s", rel, n+1, line))
+				if len(out) >= maxMatches {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	seen := make(map[string]bool, len(refs))
 	for _, ref := range refs {
+		seen[ref.rel] = true
 		lines, err := self.readLines(ref.id, 0, -1)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read buffer %s: %w", ref.id, err)
 		}
-		for n, line := range lines {
-			if re.MatchString(line) {
-				out = append(out, fmt.Sprintf("%s:%d:%s", ref.rel, n+1, line))
-				if len(out) >= maxMatches {
-					break
-				}
-			}
-		}
-		if len(out) >= maxMatches {
+		if grepLines(ref.rel, lines) {
 			break
+		}
+	}
+
+	// Buffers only cover files the user (or a prior tool call) already opened
+	// in Emacs; fall through to the rest of the project on disk so grep works
+	// without that precondition.
+	if len(out) < maxMatches {
+		files, err := self.projectFiles(include)
+		if err != nil {
+			return nil, nil, fmt.Errorf("list project files: %w", err)
+		}
+		for _, rel := range files {
+			if seen[rel] {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(root, rel))
+			if err != nil || bytes.IndexByte(data, 0) != -1 {
+				continue // unreadable (e.g. removed mid-walk) or binary
+			}
+			if grepLines(rel, strings.Split(string(data), "\n")) {
+				break
+			}
 		}
 	}
 
@@ -535,12 +612,12 @@ func (self *EmacsMCPServer) NewMCPServer() *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "glob",
-		Description: "List the session's opened (file-backed) buffers whose path matches a glob pattern. Paths are matched relative to the emacs session's working directory: * and ? stay within a path segment, ** spans segments, and a leading \"**/\" matches zero or more directories (so \"**/*.go\" matches both main.go and src/foo.go). Only opened buffers are considered — it does not walk the filesystem. Use open_buffer first to bring a file into scope.",
+		Description: "List project files whose path matches a glob pattern: opened buffers plus every other file on disk under the session's working directory (respecting .gitignore when it's a git repo). Paths are matched relative to that directory: * and ? stay within a path segment, ** spans segments, and a leading \"**/\" matches zero or more directories (so \"**/*.go\" matches both main.go and src/foo.go).",
 	}, self.glob)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "grep",
-		Description: "Search the contents of the session's opened (file-backed) buffers with a regular expression. Optionally restrict to buffers whose path matches an include glob (relative to the session's working directory). Only opened buffers are searched — it does not walk the filesystem; use open_buffer first to bring a file into scope. Returns path:line:text.",
+		Description: "Search project file contents with a regular expression: opened buffers (their live, possibly-unsaved contents) plus every other file on disk under the session's working directory (respecting .gitignore when it's a git repo). Optionally restrict to files whose path matches an include glob (relative to the session's working directory). Returns path:line:text.",
 	}, self.grep)
 
 	mcp.AddTool(server, &mcp.Tool{

@@ -16,6 +16,7 @@
 
 (require 'json)
 (require 'let-alist)
+(require 'project)
 (require 'pulse)
 (require 'seq)
 (require 'server)
@@ -565,6 +566,7 @@ location, mirroring `sidekick-prompt'."
     (pcase .op
       ("list-buffers" `((buffers . ,(sidekick--buffers nil))))
       ("open-file-buffers" `((buffers . ,(sidekick--buffers t))))
+      ("project-files" `((files . ,(sidekick--project-files))))
       ("read-lines" `((lines . ,(sidekick--read-lines .buf .start .end))))
       ("set-lines" (sidekick--set-lines .buf .start .end .lines) '((ok . t)))
       ("open" `((id . ,(sidekick--open .path))))
@@ -658,6 +660,27 @@ user sees where I'm working."
    (find-file-noselect
     (expand-file-name path (or sidekick-root default-directory)))))
 
+(defun sidekick--project-files ()
+  "Every project file under `sidekick-root', relative to it, as a vector.
+Backs the `project-files' op, which is what glob/grep fall through to for
+files that aren't already open as buffers. Prefers `project.el' over an ad
+hoc filesystem walk so file discovery goes through Emacs's own generic,
+backend-agnostic notion of a project: for a VC-backed project (git, hg, ...)
+that means the ignore rules Emacs already knows about (.gitignore and
+friends) are honored automatically, with no external process spawned by us.
+Falls back to a plain recursive walk, skipping VCS metadata directories,
+when no project is detected (e.g. the root isn't under version control)."
+  (let* ((root (file-name-as-directory (or sidekick-root default-directory)))
+         (default-directory root)
+         (proj (project-current nil root))
+         (files (if proj
+                    (project-files proj)
+                  (directory-files-recursively
+                   root ".*" nil
+                   (lambda (dir)
+                     (not (member (file-name-nondirectory (directory-file-name dir))
+                                  '(".git" ".hg" ".svn"))))))))
+    (vconcat (mapcar (lambda (f) (file-relative-name f root)) files))))
 (defun sidekick--jump (buf line col)
   "Show BUF in the selected window with point at LINE:COL (1-based).
 Pushes the prior location onto the xref marker stack first, so
