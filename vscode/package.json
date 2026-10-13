@@ -1,0 +1,113 @@
+{
+  "name": "sidekick-vscode",
+  "displayName": "Sidekick",
+  "description": "Drive Claude Code from your editor: leave a REQ: comment, Claude answers in place.",
+  "version": "0.1.0",
+  "license": "MPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lthms/sidekick.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "ai",
+    "assistant",
+    "pair-programming",
+    "mcp"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "sidekick.notify",
+        "category": "Sidekick",
+        "title": "Notify"
+      },
+      {
+        "command": "sidekick.interrupt",
+        "category": "Sidekick",
+        "title": "Interrupt"
+      },
+      {
+        "command": "sidekick.restart",
+        "category": "Sidekick",
+        "title": "Restart"
+      },
+      {
+        "command": "sidekick.changeModel",
+        "category": "Sidekick",
+        "title": "Change Model"
+      },
+      {
+        "command": "sidekick.setup",
+        "category": "Sidekick",
+        "title": "Setup"
+      },
+      {
+        "command": "sidekick.showQuestion",
+        "category": "Sidekick",
+        "title": "Show Pending Question"
+      }
+    ],
+    "configuration": {
+      "title": "Sidekick",
+      "properties": {
+        "sidekick.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "URL of the sidekick daemon."
+        },
+        "sidekick.claude.defaultModel": {
+          "type": "string",
+          "default": "opus",
+          "description": "Model the claude session is started with."
+        },
+        "sidekick.claude.autoInstall": {
+          "type": "boolean",
+          "default": true,
+          "description": "Install the vscode@sidekick plugin when it is missing. Without the plugin, claude has no /vscode:monitor command to bootstrap the session with, so no session is started."
+        },
+        "sidekick.claude.marketplace.repo": {
+          "type": "string",
+          "default": "lthms/sidekick",
+          "description": "Marketplace repository the vscode@sidekick plugin is installed from."
+        },
+        "sidekick.claude.marketplace.ref": {
+          "type": "string",
+          "default": "main",
+          "description": "Git ref of the marketplace repository."
+        },
+        "sidekick.claude.marketplace.path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Local path of a marketplace checkout, used instead of the repository when set."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.130",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

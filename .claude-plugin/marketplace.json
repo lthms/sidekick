@@ -11,6 +11,11 @@
       "name": "emacs",
       "source": "./plugins/emacs",
       "description": "sidekick for emacs"
+    },
+    {
+      "name": "vscode",
+      "source": "./plugins/vscode",
+      "description": "sidekick for vscode"
     }
   ]
 }

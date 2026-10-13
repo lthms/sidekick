@@ -42,6 +42,11 @@ type emacsRegisterParams struct {
 	Root   string `json:"root" validate:"required"`
 }
 
+type vscodeRegisterParams struct {
+	Endpoint string `json:"endpoint" validate:"required"`
+	Root     string `json:"root" validate:"required"`
+}
+
 type registerRequest struct {
 	PID    int
 	Server AppMCPSever
@@ -70,6 +75,13 @@ func (req *registerRequest) UnmarshalJSON(data []byte) error {
 		}
 
 		req.Server = &EmacsMCPServer{socket: params.Socket, root: params.Root}
+	case Vscode:
+		var params vscodeRegisterParams
+		if err := json.Unmarshal(data, &params); err != nil {
+			return err
+		}
+
+		req.Server = &VSCodeMCPServer{endpoint: params.Endpoint, root: params.Root}
 	}
 
 	return nil
