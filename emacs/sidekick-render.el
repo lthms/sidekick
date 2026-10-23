@@ -53,6 +53,10 @@
   '((t :inherit font-lock-function-name-face))
   "Face for a tool-call header line.")
 
+(defface sidekick-notice-face
+  '((t :inherit font-lock-warning-face))
+  "Face for an out-of-band notice, such as a turn cut short.")
+
 (defface sidekick-footer-face
   '((t :inherit shadow))
   "Face for the faint per-turn token/cost footer.")
@@ -76,6 +80,12 @@ once the block completes.")
 
 (defvar-local sidekick--fold-content nil
   "Marker at the start of the open fold's hidden content.")
+
+(defvar-local sidekick--interrupted nil
+  "Non-nil once the running turn has been cut short by `sidekick-interrupt'.
+Set when claude injects its interrupt marker, which arrives while the last
+content block is still open, and cleared by the `result' that flushes it to
+the buffer.")
 
 ;;; Mode -----------------------------------------------------------------------
 
@@ -131,7 +141,8 @@ reader who scrolled up is left in place."
   (setq sidekick--cur-block nil
         sidekick--answer-beg nil
         sidekick--fold-header nil
-        sidekick--fold-content nil))
+        sidekick--fold-content nil
+        sidekick--interrupted nil))
 
 (defun sidekick-render-user-prompt (text)
   "Render TEXT as a user turn separating what follows from what came before."
@@ -145,8 +156,31 @@ reader who scrolled up is left in place."
       ("stream_event" (sidekick--render-stream-event .event))
       ("result" (sidekick--render-result ev))
       ;; `assistant'/`user' carry the same content as whole messages; we render
-      ;; from the partial `stream_event' deltas instead, so ignore them here.
+      ;; from the partial `stream_event' deltas instead, so only the one `user'
+      ;; event with no counterpart in that stream is of interest here.
+      ("user" (sidekick--note-interrupt ev))
       (_ nil))))
+
+(defconst sidekick--interrupt-marker "[Request interrupted by user]"
+  "The message claude injects in place of the turn `sidekick-interrupt' cut.
+It reaches us only as a whole `user' event -- the partial-message stream
+just stops -- so it is the one reliable sign that a turn ended early
+rather than finished.")
+
+(defun sidekick--note-interrupt (ev)
+  "Remember whether `user' event EV is claude's interrupt marker.
+The notice itself waits for the `result': the marker arrives before the
+closing `content_block_stop', so rendering it here would bury it inside
+the fold that stop is about to collapse."
+  (let-alist ev
+    (let ((content (let-alist .message .content)))
+      (when (and (listp content)
+                 (seq-some (lambda (block)
+                             (and (consp block)
+                                  (equal (alist-get 'text block)
+                                         sidekick--interrupt-marker)))
+                           content))
+        (setq sidekick--interrupted t)))))
 
 (defun sidekick--render-stream-event (event)
   "Dispatch a raw Claude API streaming EVENT (the `event' field of a
@@ -202,19 +236,28 @@ reader who scrolled up is left in place."
   (setq sidekick--cur-block nil))
 
 (defun sidekick--render-result (ev)
-  "Handle the trailing `result' EV: mark idle and append a token/cost footer."
+  "Handle the trailing `result' EV: mark idle and close the turn off.
+A turn that ran to completion gets a token/cost footer; one cut short by
+`sidekick-interrupt' gets the interrupt notice instead -- its result
+reports zero tokens and zero cost, so the usual footer would only say
+`0 tokens · $0.0000\='."
   (let-alist ev
     (let* ((out (let-alist .usage .output_tokens))
            (cost .total_cost_usd))
       (sidekick--set-status nil out)
-      (when (or out cost)
+      (cond
+       (sidekick--interrupted
+        (setq sidekick--interrupted nil)
+        (unless (bolp) (sidekick--conv-insert "\n"))
+        (sidekick--conv-insert "⨯ interrupted\n" 'sidekick-notice-face))
+       ((or out cost)
         (unless (bolp) (sidekick--conv-insert "\n"))
         (sidekick--conv-insert
          (concat (when out (format "  %s tokens" (sidekick--humanize out)))
                  (when cost (format "%s$%.4f"
                                     (if out " · " "  ") cost))
                  "\n")
-         'sidekick-footer-face)))))
+         'sidekick-footer-face))))))
 
 ;;; Folds ----------------------------------------------------------------------
 
