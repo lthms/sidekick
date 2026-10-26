@@ -14,6 +14,7 @@
 
 ;;; Code:
 
+(require 'compile)
 (require 'json)
 (require 'let-alist)
 (require 'pulse)
@@ -617,6 +618,9 @@ location, mirroring `sidekick-prompt'."
       ("apply-code-action"
        `((buffers . ,(sidekick--apply-code-action .buf .line .col .endLine
                                                   .endCol .kind .name))))
+      ("compile" `((buffer . ,(sidekick--compile .path .command))))
+      ("compile-status" (sidekick--compile-status .buf))
+      ("compile-kill" (sidekick--compile-kill .buf) '((ok . t)))
       (_ (error "unknown op: %s" .op)))))
 
 (defun sidekick--buffer (name)
@@ -972,6 +976,54 @@ the names of the buffers it modified."
                           (sidekick--eglot-execute (eglot-current-server)
                                                    action)))
                 ('lsp-mode (lsp-execute-code-action action))))))))))
+
+;;; compile --------------------------------------------------------------------
+
+;; Builds and tests run through `compilation-start', so they show up where the
+;; user expects them: a live `compilation-mode' buffer with clickable errors
+;; that `next-error' walks, and the command lands in `compile-history'.  The
+;; call returns at once; the server polls `compile-status' until the
+;; buffer-local result is set, so Emacs stays responsive while it runs.
+
+(defvar-local sidekick--compile-result nil
+  "Exit message of the sidekick compilation in this buffer, once finished.")
+
+(defun sidekick--compile-finished (_buf msg)
+  "Record MSG, the compilation's exit message, for `sidekick--compile-status'."
+  (setq sidekick--compile-result (string-trim msg)))
+
+(defun sidekick--compile (dir command)
+  "Run COMMAND in DIR as a compilation; return its buffer's name.
+Each project gets its own `*compilation:NAME*' buffer, so a run never
+clobbers the user's own `*compilation*'.  A run still going in that buffer
+is an error: superseding it would leave the earlier caller polling a buffer
+that now reports the new run's result."
+  (let* ((default-directory (file-name-as-directory dir))
+         (name (format "*compilation:%s*" (sidekick--project-name dir)))
+         (_ (when-let* ((old (get-buffer name))
+                        ((process-live-p (get-buffer-process old))))
+              (error "a command is still running in %s" name)))
+         (buf (compilation-start command nil (lambda (_mode) name))))
+    (add-to-history 'compile-history command)
+    (with-current-buffer buf
+      (setq sidekick--compile-result nil)
+      (add-hook 'compilation-finish-functions #'sidekick--compile-finished nil t))
+    (buffer-name buf)))
+
+(defun sidekick--compile-status (buf)
+  "Whether the compilation in BUF is done, and with what exit message.
+Once done, also its line count, so the server can read just the tail."
+  (with-current-buffer (sidekick--buffer buf)
+    `((done . ,(if sidekick--compile-result t :false))
+      (status . ,(or sidekick--compile-result ""))
+      (lines . ,(if sidekick--compile-result
+                    (save-restriction (widen) (count-lines (point-min) (point-max)))
+                  0)))))
+
+(defun sidekick--compile-kill (buf)
+  "Interrupt the compilation running in BUF, like `kill-compilation'."
+  (when-let* ((proc (get-buffer-process (sidekick--buffer buf))))
+    (interrupt-process proc)))
 
 ;;; Mode-line status ----------------------------------------------------------
 

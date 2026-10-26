@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -65,6 +66,8 @@ type emacsRequest struct {
 	EndCol  int    `json:"endCol"`
 	Kind    string `json:"kind"`
 	Name    string `json:"name"`
+	// compile: Command runs in the directory given by Path.
+	Command string `json:"command"`
 }
 
 type emacsBuf struct {
@@ -618,6 +621,74 @@ func (self *EmacsMCPServer) codeActions(_ context.Context, _ *mcp.CallToolReques
 	return textResult(strings.Join(out, "\n")), nil, nil
 }
 
+type EmacsRunCommandInput struct {
+	Command string `json:"command" jsonschema:"the shell command to run, e.g. go test ./... or make"`
+	Timeout *int   `json:"timeout_seconds,omitempty" jsonschema:"give up and interrupt the command after this many seconds; defaults to 600"`
+}
+
+func (self *EmacsMCPServer) runCommand(ctx context.Context, _ *mcp.CallToolRequest, in EmacsRunCommandInput) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(in.Command) == "" {
+		return nil, nil, fmt.Errorf("run_command requires a command")
+	}
+	if self.root == "" {
+		return nil, nil, fmt.Errorf("run_command: this session has no project directory to run in")
+	}
+	timeout := 600 * time.Second
+	if in.Timeout != nil && *in.Timeout > 0 {
+		timeout = time.Duration(*in.Timeout) * time.Second
+	}
+
+	var started struct {
+		Buffer string `json:"buffer"`
+	}
+	if err := self.call(emacsRequest{Op: "compile", Path: self.root, Command: in.Command}, &started); err != nil {
+		return nil, nil, fmt.Errorf("run %q: %w", in.Command, err)
+	}
+
+	// Poll rather than block inside Emacs: a long-running emacsclient eval
+	// would freeze the user's editor for the whole build.
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
+
+	var status struct {
+		Done   bool   `json:"done"`
+		Status string `json:"status"`
+		// Lines is the buffer's line count, set once Done.
+		Lines int `json:"lines"`
+	}
+	for !status.Done {
+		select {
+		case <-ctx.Done():
+			_ = self.call(emacsRequest{Op: "compile-kill", Buf: started.Buffer}, nil)
+			return nil, nil, fmt.Errorf("run %q: stopped, interrupting it (timeout %s; output in buffer %s): %w", in.Command, timeout, started.Buffer, ctx.Err())
+		case <-tick.C:
+		}
+		if err := self.call(emacsRequest{Op: "compile-status", Buf: started.Buffer}, &status); err != nil {
+			return nil, nil, fmt.Errorf("run %q: %w", in.Command, err)
+		}
+	}
+
+	// Errors and the exit line sit at the end; fetch only the tail and point
+	// at the buffer for the rest, so a huge build log never crosses
+	// emacsclient in full.
+	const maxLines = 300
+	skip := max(status.Lines-maxLines, 0)
+	lines, err := self.readLines(started.Buffer, skip, -1)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read buffer %s: %w", started.Buffer, err)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s (buffer %s)\n", status.Status, started.Buffer)
+	if skip > 0 {
+		fmt.Fprintf(&b, "(first %d lines elided; read_buffer %s for them)\n", skip, started.Buffer)
+	}
+	b.WriteString(strings.Join(lines, "\n"))
+	return textResult(b.String()), nil, nil
+}
+
 func (self *EmacsMCPServer) Kind() SupportedApp {
 	return Emacs
 }
@@ -697,6 +768,11 @@ func (self *EmacsMCPServer) NewMCPServer() *mcp.Server {
 		Name:        "code_actions",
 		Description: "List or apply the language server's code actions (quick fixes, organize imports, extract/inline refactorings, …) at a buffer location or over a line range, through the buffer's LSP client (eglot or lsp-mode). Without apply, returns the available action titles; with apply set to one of those titles, executes it as the client's own code-action command would. Without a range, the request covers any diagnostics at line:column, so quick fixes for them are offered. Edits are left unsaved; the result lists the modified buffers.",
 	}, self.codeActions)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "run_command",
+		Description: "Run a shell command (build, tests, linters, …) from the session's working directory as an Emacs compilation, and wait for it to finish. The user watches it live in a *compilation:PROJECT* buffer with clickable errors (next-error), and the command is added to their compile history. Returns the exit status and the tail of the output; the buffer name is included so read_buffer can fetch the rest. Save modified buffers first (save_buffer) so the command sees your changes. Prefer this over a shell for anything the user would want to see.",
+	}, self.runCommand)
 
 	return server
 }
