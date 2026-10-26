@@ -27,6 +27,8 @@ Golden rules:
 - Build and test with `run_command`, so the user sees the output in emacs.
 - Rename with `rename_symbol` and use `code_actions` for fixes and
   refactorings rather than hand-editing every site.
+- When a request says "this" or "here", call `editor_state` to see the
+  user's cursor and selection.
 
 Iterate over every `REQ:` comment this way.
 
