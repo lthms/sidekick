@@ -621,6 +621,7 @@ location, mirroring `sidekick-prompt'."
       ("compile" `((buffer . ,(sidekick--compile .path .command))))
       ("compile-status" (sidekick--compile-status .buf))
       ("compile-kill" (sidekick--compile-kill .buf) '((ok . t)))
+      ("editor-state" (sidekick--editor-state))
       (_ (error "unknown op: %s" .op)))))
 
 (defun sidekick--buffer (name)
@@ -1024,6 +1025,48 @@ Once done, also its line count, so the server can read just the tail."
   "Interrupt the compilation running in BUF, like `kill-compilation'."
   (when-let* ((proc (get-buffer-process (sidekick--buffer buf))))
     (interrupt-process proc)))
+
+;;; Editor state ---------------------------------------------------------------
+
+(defun sidekick--window-state (win)
+  "WIN's buffer, file, point and visible line range, as an alist."
+  (let ((buf (window-buffer win)))
+    (with-current-buffer buf
+      (save-restriction
+        (widen)
+        (let ((pt (window-point win)))
+          `((buffer . ,(buffer-name buf))
+            (file . ,(or (buffer-file-name buf) ""))
+            (line . ,(line-number-at-pos pt t))
+            (column . ,(save-excursion (goto-char pt) (1+ (current-column))))
+            (start . ,(line-number-at-pos (window-start win) t))
+            (end . ,(line-number-at-pos (window-end win t) t))))))))
+
+(defun sidekick--editor-state ()
+  "What the user is looking at: the selected window, its active region, and
+every other window on the selected frame.  This runs with the server's
+internal buffer current, so everything is read off the windows themselves."
+  (let* ((win (selected-window))
+         (buf (window-buffer win))
+         (region (with-current-buffer buf
+                   (when (use-region-p)
+                     (let ((beg (region-beginning))
+                           (end (region-end)))
+                       `((start . ,(line-number-at-pos beg t))
+                         ;; A region ending at a line start (a whole-line
+                         ;; selection) does not cover that line.
+                         (end . ,(line-number-at-pos
+                                  (if (and (> end beg)
+                                           (save-excursion (goto-char end) (bolp)))
+                                      (1- end)
+                                    end)
+                                  t))
+                         (text . ,(buffer-substring-no-properties beg end))))))))
+    `((selected . ,(sidekick--window-state win))
+      (region . ,(or region :null))
+      (windows . ,(vconcat
+                   (mapcar #'sidekick--window-state
+                           (delq win (window-list nil 'no-minibuf))))))))
 
 ;;; Mode-line status ----------------------------------------------------------
 

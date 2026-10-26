@@ -689,6 +689,52 @@ func (self *EmacsMCPServer) runCommand(ctx context.Context, _ *mcp.CallToolReque
 	return textResult(b.String()), nil, nil
 }
 
+// emacsWindow is what one Emacs window shows: its buffer, cursor and the
+// range of lines on screen.
+type emacsWindow struct {
+	Buffer string `json:"buffer"`
+	File   string `json:"file"`
+	Line   int    `json:"line"`
+	Column int    `json:"column"`
+	Start  int    `json:"start"`
+	End    int    `json:"end"`
+}
+
+func (self *EmacsMCPServer) editorState(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+	var resp struct {
+		Selected emacsWindow `json:"selected"`
+		Region   *struct {
+			Start int    `json:"start"`
+			End   int    `json:"end"`
+			Text  string `json:"text"`
+		} `json:"region"`
+		Windows []emacsWindow `json:"windows"`
+	}
+	if err := self.call(emacsRequest{Op: "editor-state"}, &resp); err != nil {
+		return nil, nil, fmt.Errorf("editor state: %w", err)
+	}
+
+	describe := func(w emacsWindow) string {
+		s := fmt.Sprintf("buffer %s", w.Buffer)
+		if w.File != "" {
+			s += fmt.Sprintf(" (%s)", w.File)
+		}
+		return s + fmt.Sprintf(", cursor %d:%d, showing lines %d-%d", w.Line, w.Column, w.Start, w.End)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "selected window: %s\n", describe(resp.Selected))
+	if r := resp.Region; r != nil {
+		fmt.Fprintf(&b, "selection: lines %d-%d\n```\n%s\n```\n", r.Start, r.End, r.Text)
+	} else {
+		b.WriteString("selection: none\n")
+	}
+	for _, w := range resp.Windows {
+		fmt.Fprintf(&b, "other window: %s\n", describe(w))
+	}
+	return textResult(b.String()), nil, nil
+}
+
 func (self *EmacsMCPServer) Kind() SupportedApp {
 	return Emacs
 }
@@ -773,6 +819,11 @@ func (self *EmacsMCPServer) NewMCPServer() *mcp.Server {
 		Name:        "run_command",
 		Description: "Run a shell command (build, tests, linters, …) from the session's working directory as an Emacs compilation, and wait for it to finish. The user watches it live in a *compilation:PROJECT* buffer with clickable errors (next-error), and the command is added to their compile history. Returns the exit status and the tail of the output; the buffer name is included so read_buffer can fetch the rest. Save modified buffers first (save_buffer) so the command sees your changes. Prefer this over a shell for anything the user would want to see.",
 	}, self.runCommand)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "editor_state",
+		Description: "Report what the user is looking at in Emacs right now: the selected window's buffer, file, cursor line:column and visible line range, the active selection (lines and text) if any, and the other windows on screen. Use it to resolve \"this\", \"here\" or \"the selected code\" in a request without asking the user to paste it.",
+	}, self.editorState)
 
 	return server
 }
