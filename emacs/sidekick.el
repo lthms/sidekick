@@ -401,6 +401,20 @@ session instead of starting a fresh conversation."
                              (message . ((role . "user") (content . ,text)))))
            "\n")))
 
+(defun sidekick--send-control-request (proc subtype)
+  "Send a SUBTYPE control request to PROC (an NDJSON line on stdin).
+Claude answers on stdout with a `control_response' keyed by the request id;
+nothing here waits for it, so the id need only be unique within the
+session.  `sidekick-render-event' ignores the response."
+  (process-send-string
+   proc
+   (concat (json-serialize
+            `((type . "control_request")
+              (request_id . ,(format "sidekick-%s-%d" subtype
+                                     (random most-positive-fixnum)))
+              (request . ((subtype . ,subtype)))))
+           "\n")))
+
 (defun sidekick--process-filter (proc chunk)
   "Parse newline-delimited JSON events from CHUNK and render them.
 Partial trailing lines are buffered on PROC until their newline arrives."
@@ -1045,6 +1059,30 @@ Terminates the `*claude:NAME*' buffer and process via
       (sidekick--kill-session session)
       (message "sidekick: killed claude session for %s" (sidekick--project-name root)))))
 
+;;;###autoload
+(defun sidekick-interrupt ()
+  "Interrupt the current turn of the current project's claude session.
+Stops claude mid-thought without killing the session, routed like
+`sidekick-prompt'.  A terminal session gets an ESC on its pty, as if typed
+into the TUI; a native session gets a stream-json `interrupt' control
+request on stdin.
+
+Claude accepts either one the same way whether or not a turn is in flight,
+so the echo area reports the request, not its effect; a turn actually cut
+short says so in the session buffer."
+  (interactive)
+  (let* ((root (sidekick--project-root))
+         (session (gethash root sidekick--sessions))
+         (buffer (and session (plist-get session :buffer)))
+         (proc (and (buffer-live-p buffer) (get-buffer-process buffer))))
+    (if (not (process-live-p proc))
+        (message "sidekick: no session for %s (M-x sidekick-setup)"
+                 (sidekick--project-name root))
+      (if (plist-get session :terminal)
+          (term-send-string proc "\e")
+        (sidekick--send-control-request proc "interrupt"))
+      (message "sidekick: interrupt sent to %s" (sidekick--project-name root)))))
+
 ;;; Keybindings ----------------------------------------------------------------
 
 ;;;###autoload (autoload 'sidekick-command-map "sidekick" nil t 'keymap)
@@ -1062,6 +1100,7 @@ then `C-c s p' runs `sidekick-prompt', `C-c s n' `sidekick-notify', etc."
   "n" #'sidekick-notify
   "s" #'sidekick-setup
   "r" #'sidekick-reset
+  "i" #'sidekick-interrupt
   "R" #'sidekick-resume)
 
 ;; Make the prefix reachable as a command so `C-c s' echoes its bindings.
