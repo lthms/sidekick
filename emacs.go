@@ -58,6 +58,13 @@ type emacsRequest struct {
 	// answers offered in the minibuffer.
 	Prompt  string   `json:"prompt"`
 	Choices []string `json:"choices"`
+	// rename/code actions: EndLine/EndCol close an optional range starting at
+	// Line/Col (0 = none), Kind filters code actions by LSP kind, and Name is
+	// the new name (rename) or the title of the action to apply.
+	EndLine int    `json:"endLine"`
+	EndCol  int    `json:"endCol"`
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
 }
 
 type emacsBuf struct {
@@ -363,11 +370,16 @@ func (self *EmacsMCPServer) saveBuffer(_ context.Context, _ *mcp.CallToolRequest
 	return textResult(fmt.Sprintf("saved buffer %s", in.Buffer)), nil, nil
 }
 
-func (self *EmacsMCPServer) jump(_ context.Context, _ *mcp.CallToolRequest, in EmacsJumpInput) (*mcp.CallToolResult, any, error) {
-	col := 1
-	if in.Column != nil {
-		col = *in.Column
+// columnOr1 resolves an optional 1-based column, defaulting to 1.
+func columnOr1(col *int) int {
+	if col == nil {
+		return 1
 	}
+	return *col
+}
+
+func (self *EmacsMCPServer) jump(_ context.Context, _ *mcp.CallToolRequest, in EmacsJumpInput) (*mcp.CallToolResult, any, error) {
+	col := columnOr1(in.Column)
 
 	if err := self.call(emacsRequest{Op: "jump", Buf: in.Buffer, Line: in.Line, Col: col}, nil); err != nil {
 		return nil, nil, fmt.Errorf("jump to buffer %s: %w", in.Buffer, err)
@@ -399,10 +411,7 @@ type emacsLocation struct {
 // and renders the resulting locations as "path:line: summary" lines, with the
 // path relative to the session cwd (like grep) when it can be.
 func (self *EmacsMCPServer) xref(op string, in EmacsXrefInput) (*mcp.CallToolResult, any, error) {
-	col := 1
-	if in.Column != nil {
-		col = *in.Column
-	}
+	col := columnOr1(in.Column)
 
 	var resp struct {
 		Locations []emacsLocation `json:"locations"`
@@ -513,6 +522,111 @@ func (self *EmacsMCPServer) ask(_ context.Context, _ *mcp.CallToolRequest, in Em
 	return textResult(resp.Answer), nil, nil
 }
 
+// EmacsRenameInput locates the symbol to rename and its new name.
+type EmacsRenameInput struct {
+	Buffer  string `json:"buffer" jsonschema:"the emacs buffer name containing the symbol"`
+	Line    int    `json:"line" jsonschema:"1-based line the symbol is on"`
+	Column  *int   `json:"column,omitempty" jsonschema:"1-based column landing on the symbol; defaults to 1"`
+	NewName string `json:"new_name" jsonschema:"the symbol's new name"`
+}
+
+// editedBuffers renders the buffers an LSP edit touched, reminding that the
+// changes are unsaved.
+func editedBuffers(what string, bufs []string) *mcp.CallToolResult {
+	if len(bufs) == 0 {
+		return textResult(what + ": no buffer changed (nothing to do, the user declined the edit, or it awaits their review in a diff buffer)")
+	}
+	return textResult(fmt.Sprintf("%s: modified (unsaved) buffers:\n%s", what, strings.Join(bufs, "\n")))
+}
+
+func (self *EmacsMCPServer) rename(_ context.Context, _ *mcp.CallToolRequest, in EmacsRenameInput) (*mcp.CallToolResult, any, error) {
+	col := columnOr1(in.Column)
+
+	var resp struct {
+		Buffers []string `json:"buffers"`
+	}
+	if err := self.call(emacsRequest{Op: "rename", Buf: in.Buffer, Line: in.Line, Col: col, Name: in.NewName}, &resp); err != nil {
+		return nil, nil, fmt.Errorf("rename in %s: %w", in.Buffer, err)
+	}
+
+	return editedBuffers("renamed to "+in.NewName, resp.Buffers), nil, nil
+}
+
+// EmacsCodeActionsInput locates where to ask the language server for code
+// actions, and optionally which one to apply.
+type EmacsCodeActionsInput struct {
+	Buffer    string `json:"buffer" jsonschema:"the emacs buffer name"`
+	Line      int    `json:"line" jsonschema:"1-based line to ask for actions at (or the start of the range)"`
+	Column    *int   `json:"column,omitempty" jsonschema:"1-based column; defaults to 1"`
+	EndLine   *int   `json:"end_line,omitempty" jsonschema:"1-based last line of the range to ask about; omit to ask at line:column, covering any diagnostics there"`
+	EndColumn *int   `json:"end_column,omitempty" jsonschema:"1-based column ending the range (exclusive); omit to cover end_line through its end. Without end_line, the range ends on line"`
+	Kind      string `json:"kind,omitempty" jsonschema:"restrict to an LSP code action kind or any kind below it (refactor covers refactor.extract), e.g. quickfix, refactor.extract, refactor.inline, refactor.rewrite, source.organizeImports"`
+	Apply     string `json:"apply,omitempty" jsonschema:"title of the action to apply: the text before the tab on its listed line (the [kind] and (preferred) annotations are not part of it); omit to only list the available actions"`
+}
+
+func (self *EmacsMCPServer) codeActions(_ context.Context, _ *mcp.CallToolRequest, in EmacsCodeActionsInput) (*mcp.CallToolResult, any, error) {
+	req := emacsRequest{Buf: in.Buffer, Line: in.Line, Col: columnOr1(in.Column), Kind: in.Kind}
+	// EndLine 0 means no range; EndCol 0 tells Emacs to run the range to the
+	// end of EndLine. An end column alone closes a range on the start line.
+	switch {
+	case in.EndLine != nil:
+		req.EndLine = *in.EndLine
+	case in.EndColumn != nil:
+		req.EndLine = in.Line
+	}
+	if req.EndLine != 0 && in.EndColumn != nil {
+		req.EndCol = *in.EndColumn
+	}
+
+	if in.Apply != "" {
+		// Accept a whole listing line: the title is what precedes its tab.
+		title, _, _ := strings.Cut(in.Apply, "\t")
+		title = strings.TrimSpace(title)
+		req.Op, req.Name = "apply-code-action", title
+		var resp struct {
+			Buffers []string `json:"buffers"`
+		}
+		if err := self.call(req, &resp); err != nil {
+			return nil, nil, fmt.Errorf("apply code action in %s: %w", in.Buffer, err)
+		}
+		return editedBuffers("applied "+title, resp.Buffers), nil, nil
+	}
+
+	req.Op = "code-actions"
+	var resp struct {
+		Actions []struct {
+			Title     string `json:"title"`
+			Kind      string `json:"kind"`
+			Preferred bool   `json:"preferred"`
+		} `json:"actions"`
+	}
+	if err := self.call(req, &resp); err != nil {
+		return nil, nil, fmt.Errorf("code actions in %s: %w", in.Buffer, err)
+	}
+
+	if len(resp.Actions) == 0 {
+		return textResult("no code actions"), nil, nil
+	}
+	var out []string
+	for _, a := range resp.Actions {
+		// The title stands alone before a tab, so it can be passed to apply
+		// as is; kind and preference follow as annotations.
+		var notes []string
+		if a.Kind != "" {
+			notes = append(notes, "["+a.Kind+"]")
+		}
+		if a.Preferred {
+			notes = append(notes, "(preferred)")
+		}
+		line := a.Title
+		if len(notes) > 0 {
+			line += "\t" + strings.Join(notes, " ")
+		}
+		out = append(out, line)
+	}
+	return textResult(strings.Join(out, "\n")), nil, nil
+}
+
 func (self *EmacsMCPServer) Kind() SupportedApp {
 	return Emacs
 }
@@ -582,6 +696,16 @@ func (self *EmacsMCPServer) NewMCPServer() *mcp.Server {
 		Name:        "ask",
 		Description: "Put a multiple-choice question to the user in Emacs and get their pick back. Emacs shows the choices in the minibuffer (completing-read) and this call blocks until the user selects one; the selected string is returned as the result. Use it whenever you would otherwise guess between concrete alternatives — offer the options and let the user decide.",
 	}, self.ask)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "rename_symbol",
+		Description: "Rename the symbol at a buffer location everywhere it is used, through the language server via the buffer's LSP client (eglot or lsp-mode). Put line/column on the identifier. The server computes the edit across all files, and the client applies it as for the user's own rename (with eglot, their eglot-confirm-server-edits setting decides whether they review it first). Prefer this over editing each use site by hand. Fails when no LSP client manages the buffer; fall back to find_references and manual edits then. Edits are left unsaved; the result lists the modified buffers — save_buffer them once reviewed.",
+	}, self.rename)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "code_actions",
+		Description: "List or apply the language server's code actions (quick fixes, organize imports, extract/inline refactorings, …) at a buffer location or over a line range, through the buffer's LSP client (eglot or lsp-mode). Without apply, returns one action per line: its title, then a tab and its [kind] and (preferred) annotations; repeated titles are numbered (\"Title <2>\"). With apply set to one of those titles, executes it as the client's own code-action command would. Without a range, the request covers any diagnostics at line:column, so quick fixes for them are offered. Fails when no LSP client manages the buffer. Edits are left unsaved; the result lists the modified buffers.",
+	}, self.codeActions)
 
 	return server
 }
