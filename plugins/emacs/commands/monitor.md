@@ -24,6 +24,8 @@ Golden rules:
   as reported by `list_buffers` and the `buf` field.
 - Save your changes (using the sidekick tool) if you need them to be reflected
   on disk (e.g., before building)
+- Rename with `rename_symbol` and use `code_actions` for fixes and
+  refactorings rather than hand-editing every site.
 
 Iterate over every `REQ:` comment this way.
 

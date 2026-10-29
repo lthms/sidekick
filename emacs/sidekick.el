@@ -38,6 +38,22 @@
 (declare-function flymake-diagnostic-text "flymake")
 (declare-function flymake-diagnostic-type "flymake")
 (declare-function flycheck-current-errors "flycheck")
+(declare-function flymake-diagnostic-end "flymake")
+;; Likewise for the LSP clients backing the rename/code-action ops; those
+;; check which of eglot or lsp-mode manages the buffer and only call into it.
+(declare-function eglot-current-server "eglot")
+(declare-function eglot-rename "eglot")
+(declare-function eglot-code-actions "eglot")
+(declare-function eglot-execute "eglot")
+(declare-function eglot-execute-command "eglot")
+(declare-function eglot--apply-workspace-edit "eglot")
+(declare-function eglot--code-action-bounds "eglot")
+(declare-function lsp-rename "lsp-mode")
+(declare-function lsp-execute-code-action "lsp-mode")
+(declare-function lsp-code-actions-at-point "lsp-mode")
+(declare-function lsp:code-action-title "lsp-protocol")
+(declare-function lsp:code-action-kind? "lsp-protocol")
+(declare-function lsp:code-action-is-preferred? "lsp-protocol")
 (declare-function flycheck-error-line "flycheck")
 (declare-function flycheck-error-column "flycheck")
 (declare-function flycheck-error-level "flycheck")
@@ -592,6 +608,14 @@ location, mirroring `sidekick-prompt'."
                                         #'xref-backend-references))))
       ("diagnostics" `((diagnostics . ,(sidekick--diagnostics .buf))))
       ("ask" `((answer . ,(sidekick--ask .prompt .choices))))
+      ("rename"
+       `((buffers . ,(sidekick--rename .buf .line .col .name))))
+      ("code-actions"
+       `((actions . ,(sidekick--code-actions .buf .line .col .endLine .endCol
+                                             .kind))))
+      ("apply-code-action"
+       `((buffers . ,(sidekick--apply-code-action .buf .line .col .endLine
+                                                  .endCol .kind .name))))
       (_ (error "unknown op: %s" .op)))))
 
 (defun sidekick--buffer (name)
@@ -686,9 +710,7 @@ the target line so the user's eye lands on it."
        (copy-marker (window-point win))))
     (switch-to-buffer buffer)
     (widen)
-    (goto-char (point-min))
-    (forward-line (1- line))
-    (move-to-column (max 0 (1- col)))
+    (sidekick--goto line col)
     (recenter)
     (pulse-momentary-highlight-one-line (point))))
 
@@ -716,9 +738,7 @@ vector of (file line summary) alists for the file-backed results."
     (save-excursion
       (save-restriction
         (widen)
-        (goto-char (point-min))
-        (forward-line (1- line))
-        (move-to-column (max 0 (1- col)))
+        (sidekick--goto line col)
         (let* ((backend (or (xref-find-backend)
                             (error "no xref backend in %s" buf)))
                (id (if (and (stringp symbol) (not (string-empty-p symbol)))
@@ -779,6 +799,239 @@ neither is active so the caller knows no checker is running."
      ((memq type '(:warning warning eglot-warning)) "warning")
      ((memq type '(:note note eglot-note)) "note")
      (t (format "%s" type)))))
+
+;;; LSP refactorings -----------------------------------------------------------
+
+;; Renames and code actions go through whichever LSP client manages the buffer
+;; -- eglot or lsp-mode -- so the language server computes the edit across
+;; every affected file, and the client applies it the way it would for the
+;; user's own command (with eglot, `eglot-confirm-server-edits' decides whether
+;; they review it first).  Edits land in buffers unsaved; the reply names the
+;; buffers that changed so claude can review and save them.
+
+(defun sidekick--goto (line col)
+  "Move point to LINE:COL (1-based) of the current, widened buffer."
+  (goto-char (point-min))
+  (forward-line (1- line))
+  (move-to-column (max 0 (1- col))))
+
+(defun sidekick--lsp-client ()
+  "The LSP client managing the current buffer: `eglot' or `lsp-mode'."
+  (cond
+   ((and (fboundp 'eglot-current-server) (eglot-current-server)) 'eglot)
+   ((bound-and-true-p lsp-mode) 'lsp-mode)
+   (t (error "no LSP client (eglot or lsp-mode) manages %s; edit by hand \
+instead (find_references locates use sites)" (buffer-name)))))
+
+(defvar sidekick-edit-settle-time 0.3
+  "Seconds to keep reading process output after an LSP edit command.
+Servers often apply an action's edits through a separate
+workspace/applyEdit request that may land after the command returns;
+waiting this long lets those edits show up among the changed buffers.")
+
+(defun sidekick--buffer-ticks ()
+  "Alist of (BUFFER . `buffer-chars-modified-tick') for file-backed buffers.
+Text-property changes such as fontification do not count, so they are
+not mistaken for edits."
+  (seq-keep (lambda (b)
+              (when (buffer-file-name b)
+                (cons b (buffer-chars-modified-tick b))))
+            (buffer-list)))
+
+(defun sidekick--changed-buffers (ticks)
+  "Names of file-backed buffers whose text changed since TICKS, as a vector.
+Includes buffers the edit had to visit, which TICKS knows nothing about."
+  (vconcat
+   (seq-keep (lambda (b)
+               (let ((old (alist-get b ticks)))
+                 (when (and (buffer-file-name b)
+                            (not (eql old (buffer-chars-modified-tick b)))
+                            (buffer-modified-p b))
+                   (buffer-name b))))
+             (buffer-list))))
+
+(defun sidekick--settle ()
+  "Process LSP output for `sidekick-edit-settle-time' seconds."
+  (let ((deadline (+ (float-time) sidekick-edit-settle-time)))
+    (while (< (float-time) deadline)
+      (accept-process-output nil 0.05))))
+
+(defmacro sidekick--with-edits (&rest body)
+  "Run BODY; return the names of the buffers it modified.
+Edits the server pushes shortly after BODY returns are counted too."
+  (declare (indent 0))
+  (let ((ticks (make-symbol "ticks")))
+    `(let ((,ticks (sidekick--buffer-ticks)))
+       ,@body
+       (sidekick--settle)
+       (sidekick--changed-buffers ,ticks))))
+
+(defun sidekick--rename (buf line col newname)
+  "Rename the symbol at BUF LINE:COL (1-based) to NEWNAME through LSP.
+Returns the names of the buffers the rename touched."
+  (with-current-buffer (sidekick--buffer buf)
+    (let ((client (sidekick--lsp-client)))
+      (save-excursion
+        (save-restriction
+          (widen)
+          (sidekick--goto line col)
+          (sidekick--with-edits
+            (pcase client
+              ('eglot (let ((this-command 'eglot-rename))
+                        (eglot-rename newname)))
+              ('lsp-mode (lsp-rename newname)))))))))
+
+(defun sidekick--eglot-code-actions (beg end kind)
+  "Eglot's code actions from BEG to END (nil: at point), restricted to KIND.
+Without END, bound the request as `eglot-code-actions' does for the
+user (the diagnostics at point, else the sexp there).  Old eglot (no
+`eglot-execute') filters KIND by exact equality, so there KIND is
+filtered here by prefix instead, as newer eglot and lsp-mode do."
+  (let* ((bounds (cond
+                  (end (list beg end))
+                  ((fboundp 'eglot--code-action-bounds)
+                   (eglot--code-action-bounds))
+                  (t (let ((diags (and (bound-and-true-p flymake-mode)
+                                       (flymake-diagnostics beg))))
+                       (if diags
+                           (list (apply #'min (mapcar #'flymake-diagnostic-beg diags))
+                                 (apply #'max (mapcar #'flymake-diagnostic-end diags)))
+                         (list beg beg))))))
+         (old (not (fboundp 'eglot-execute)))
+         (actions (eglot-code-actions (car bounds) (cadr bounds)
+                                      (unless old kind))))
+    (if (and old kind)
+        (seq-filter (lambda (a)
+                      (string-prefix-p kind (or (plist-get a :kind) "")))
+                    actions)
+      actions)))
+
+(defun sidekick--lsp-mode-code-actions (beg end kind)
+  "lsp-mode's code actions from BEG to END (nil: at point), restricted to KIND.
+A range is passed as the active region, so lsp-mode sends the diagnostics
+overlapping it along with it; without one, lsp-mode widens the request to
+the diagnostics at point itself."
+  (save-mark-and-excursion
+    (let ((transient-mark-mode t)
+          (mark-active nil))
+      (when end
+        (set-mark end)
+        (goto-char beg)
+        (setq mark-active t))
+      (append (lsp-code-actions-at-point kind) nil))))
+
+(defun sidekick--find-code-actions (client line col end-line end-col kind)
+  "CLIENT's code actions at LINE:COL, or over the range to END-LINE:END-COL.
+KIND, when non-empty, restricts them to an LSP action kind (or any kind
+below it, e.g. \"refactor\" covers \"refactor.extract\").  Without a
+range, both clients bound the request as they do for the user's own
+command, so quick fixes for the diagnostics at point are offered.
+Point and restriction are the caller's to save; any region the user left
+active in the buffer is ignored."
+  (widen)
+  (sidekick--goto line col)
+  (let* ((kind (and (stringp kind) (not (string-empty-p kind)) kind))
+         (beg (point))
+         ;; The server sends 0 for an absent end line/column, and 0 is
+         ;; non-nil in elisp, so test for a positive value.  Without an end
+         ;; column the range runs to the end of END-LINE.
+         (end (and (natnump end-line) (> end-line 0)
+                   (save-excursion
+                     (if (and (natnump end-col) (> end-col 0))
+                         (sidekick--goto end-line end-col)
+                       (sidekick--goto end-line 1)
+                       (end-of-line))
+                     (point))))
+         (mark-active nil))
+    (pcase client
+      ('eglot (sidekick--eglot-code-actions beg end kind))
+      ('lsp-mode (sidekick--lsp-mode-code-actions beg end kind)))))
+
+(defun sidekick--code-action-field (client action field)
+  "FIELD (`title', `kind' or `preferred') of CLIENT's code ACTION."
+  (pcase client
+    ('eglot (plist-get action (pcase field
+                                ('title :title) ('kind :kind)
+                                ('preferred :isPreferred))))
+    ('lsp-mode (pcase field
+                 ('title (lsp:code-action-title action))
+                 ('kind (lsp:code-action-kind? action))
+                 ('preferred (lsp:code-action-is-preferred? action))))))
+
+(defun sidekick--code-action-labels (client actions)
+  "Alist of (LABEL . ACTION) for CLIENT's code ACTIONS, in order.
+LABEL is the action's title; a title already seen gets \" <N>\" appended
+for its Nth occurrence, so every action can be named unambiguously."
+  (let ((seen (make-hash-table :test #'equal)))
+    (mapcar (lambda (a)
+              (let* ((title (or (sidekick--code-action-field client a 'title) ""))
+                     (n (puthash title (1+ (gethash title seen 0)) seen)))
+                (cons (if (= n 1) title (format "%s <%d>" title n)) a)))
+            actions)))
+
+(defun sidekick--code-actions (buf line col end-line end-col kind)
+  "Code actions offered at BUF LINE:COL, or over the range to END-LINE:END-COL.
+KIND, when non-empty, restricts them to an LSP action kind such as
+\"quickfix\" or \"source.organizeImports\".  Returns a vector of
+\(title kind preferred) alists, where duplicate titles are numbered as by
+`sidekick--code-action-labels'."
+  (with-current-buffer (sidekick--buffer buf)
+    (let ((client (sidekick--lsp-client)))
+      (save-excursion
+        (save-restriction
+          (vconcat
+           (mapcar (lambda (la)
+                     (let ((a (cdr la)))
+                       `((title . ,(car la))
+                         (kind . ,(or (sidekick--code-action-field client a 'kind) ""))
+                         (preferred . ,(if (sidekick--code-action-field client a 'preferred)
+                                           t :false)))))
+                   (sidekick--code-action-labels
+                    client
+                    (sidekick--find-code-actions client line col end-line end-col
+                                                 kind)))))))))
+
+(defun sidekick--eglot-execute (server action)
+  "Execute code ACTION (a CodeAction or Command plist) on eglot SERVER.
+Emacs 29's eglot (1.12) has no `eglot-execute'; there, do what its
+`eglot--read-execute-code-action' did: apply the action's edit, then run
+its command."
+  (if (fboundp 'eglot-execute)
+      (eglot-execute server action)
+    (let ((command (plist-get action :command)))
+      (when-let* ((edit (plist-get action :edit)))
+        (eglot--apply-workspace-edit edit))
+      (cond
+       ((stringp command)               ; a bare Command
+        (eglot-execute-command server (intern command)
+                               (plist-get action :arguments)))
+       (command                         ; a CodeAction carrying a Command
+        (eglot-execute-command server (intern (plist-get command :command))
+                               (plist-get command :arguments)))))))
+
+(defun sidekick--apply-code-action (buf line col end-line end-col kind title)
+  "Execute the code action labelled TITLE at BUF LINE:COL.
+TITLE is a label from `sidekick--code-actions'.  The other arguments
+locate it as for `sidekick--code-actions'.  Returns the names of the
+buffers it modified."
+  (with-current-buffer (sidekick--buffer buf)
+    (let ((client (sidekick--lsp-client)))
+      (save-excursion
+        (save-restriction
+          (let* ((labels (sidekick--code-action-labels
+                          client
+                          (sidekick--find-code-actions client line col end-line
+                                                       end-col kind)))
+                 (action (or (cdr (assoc title labels))
+                             (error "no code action %S here; available: %s" title
+                                    (mapconcat (lambda (la) (format "%S" (car la)))
+                                               labels ", ")))))
+            (sidekick--with-edits
+              (pcase client
+                ('eglot (let ((this-command 'eglot-code-actions))
+                          (sidekick--eglot-execute (eglot-current-server)
+                                                   action)))
+                ('lsp-mode (lsp-execute-code-action action))))))))))
 
 ;;; Mode-line status ----------------------------------------------------------
 
