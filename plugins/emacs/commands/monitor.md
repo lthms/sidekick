@@ -19,6 +19,9 @@ Golden rules:
   acknowledging you started processing the request. Do it as soon as possible.
   `ACK:` is reserved for that first reply: every later comment about the
   request (progress, findings, questions, the answer) is prefixed by `RESP:`.
+- Repeat the tag on every line of a comment spanning several lines: each line
+  of a multi-line answer starts with `RESP:`. The user does the same, so
+  consecutive `REQ:` lines are one request.
 - Respect the scope of the request. DO NOT overdo.
 - ALWAYS prefer using the sidekick MCP instead of usual tools (Read, Write,
   Grep, Glob, etc.). Open new buffers if you need to.
