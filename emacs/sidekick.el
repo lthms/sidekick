@@ -1418,18 +1418,170 @@ reaches the window edge; match 1 is the tag."
      (1 'bold prepend)))
   "Font-lock keywords added by `sidekick-annotation-mode'.")
 
+;; Every line of an annotation carries its tag (see `sidekick-request'), so
+;; the lines filling or auto-fill create must get it too: by default they only
+;; repeat the comment starter.  `sidekick--fill-annotation' refills a run of
+;; same-tag lines itself, and `sidekick--annotation-line-break' tags the line
+;; a comment break opens.
+
+(defun sidekick--annotation-line ()
+  "Parse the current line as an annotation, or return nil.
+An annotation line is PREFIX TAG: TEXT, where PREFIX is the indentation
+and comment starter and TAG is REQ, ACK or RESP, optionally followed by
+a block comment's closer (SUFFIX).  Returns the plist (:prefix :tag
+:text :suffix :text-beg).  Without comment syntax, the tag must start the
+line; with it, the tag must open the comment."
+  (save-excursion
+    (beginning-of-line)
+    (let ((bol (point)))
+      (skip-chars-forward " \t")
+      (when (or (not comment-start)
+                (and comment-start-skip (looking-at comment-start-skip)
+                     (goto-char (match-end 0))))
+        (when (looking-at "\\(REQ\\|ACK\\|RESP\\):[ \t]?")
+          (let* ((prefix (buffer-substring-no-properties bol (point)))
+                 (tag (match-string-no-properties 1))
+                 (text-beg (match-end 0))
+                 (text (buffer-substring-no-properties text-beg
+                                                       (line-end-position)))
+                 (closer (and comment-end (string-trim comment-end)))
+                 suffix)
+            (when (and closer (not (string-empty-p closer))
+                       (string-match (concat "[ \t]*" (regexp-quote closer)
+                                             "[ \t]*\\'")
+                                     text))
+              (setq suffix (concat " " closer)
+                    text (substring text 0 (match-beginning 0))))
+            (list :prefix prefix :tag tag :text (string-trim text)
+                  :suffix suffix :text-beg text-beg)))))))
+
+(defun sidekick--annotation-block ()
+  "Bounds and lines of the annotation around point, or nil.
+The annotation is the run of lines sharing the current line's prefix and
+tag.  Returns (BEG END LINES), LINES being their parses, top to bottom."
+  (when-let* ((here (sidekick--annotation-line)))
+    (let ((same (lambda (l)
+                  (and l (equal (plist-get l :prefix) (plist-get here :prefix))
+                       (equal (plist-get l :tag) (plist-get here :tag)))))
+          (lines (list here))
+          beg end)
+      (save-excursion
+        (while (and (= (forward-line -1) 0)
+                    (funcall same (sidekick--annotation-line)))
+          (push (sidekick--annotation-line) lines))
+        (unless (funcall same (sidekick--annotation-line)) (forward-line 1))
+        (setq beg (line-beginning-position)))
+      (save-excursion
+        (while (and (= (forward-line 1) 0) (not (eobp))
+                    (funcall same (sidekick--annotation-line)))
+          (setq lines (append lines (list (sidekick--annotation-line)))))
+        (unless (funcall same (sidekick--annotation-line)) (forward-line -1))
+        (setq end (line-end-position)))
+      (list beg end lines))))
+
+(defun sidekick--fill-annotation (&optional _justify)
+  "Refill the annotation around point, tagging every line it ends up on.
+Lines whose text is empty separate paragraphs.  Returns non-nil when point
+was on an annotation, so that `fill-paragraph' leaves it at that."
+  (when-let* ((block (sidekick--annotation-block)))
+    (pcase-let* ((`(,beg ,end ,lines) block)
+                 (first (car lines))
+                 (head (concat (plist-get first :prefix)
+                               (plist-get first :tag) ": "))
+                 (suffix (or (plist-get first :suffix) ""))
+                 (width (max 20 (- fill-column (string-width head)
+                                   (length suffix))))
+                 (paragraphs (list nil)))
+      ;; PARAGRAPHS collects, newest first, each paragraph's texts (newest
+      ;; first too) and a `sep' for each empty line between them.
+      (dolist (l lines)
+        (if (string-empty-p (plist-get l :text))
+            (setq paragraphs (cons nil (cons 'sep paragraphs)))
+          (push (plist-get l :text) (car paragraphs))))
+      (let* ((filled
+              (mapcar
+               (lambda (texts)
+                 (cond
+                  ((eq texts 'sep)
+                   (list (concat (string-trim-right head) suffix)))
+                  ((null texts) nil)
+                  (t
+                   (with-temp-buffer
+                     (insert (string-join (reverse texts) " "))
+                     (let ((fill-column width) (fill-prefix nil)
+                           (adaptive-fill-mode nil))
+                       (fill-region (point-min) (point-max)))
+                     (mapcar (lambda (s) (concat head s suffix))
+                             (split-string (buffer-string) "\n" t))))))
+               (reverse paragraphs)))
+             (new (string-join (apply #'append filled) "\n"))
+             (pt (point)))
+        (unless (equal new (buffer-substring-no-properties beg end))
+          (delete-region beg end)
+          (goto-char beg)
+          (insert new)
+          (goto-char (min pt (+ beg (length new))))))
+      t)))
+
+(defvar-local sidekick--orig-fill-paragraph-function nil
+  "The `fill-paragraph-function' `sidekick-annotation-mode' wraps.")
+
+(defvar-local sidekick--orig-comment-line-break-function nil
+  "The `comment-line-break-function' `sidekick-annotation-mode' wraps.")
+
+(defun sidekick--annotation-fill-paragraph (&optional justify)
+  "Fill an annotation as `sidekick--fill-annotation', else as before.
+JUSTIFY is passed on to the mode's own `fill-paragraph-function'."
+  (comment-normalize-vars t)
+  (or (sidekick--fill-annotation justify)
+      (and sidekick--orig-fill-paragraph-function
+           (funcall sidekick--orig-fill-paragraph-function justify))))
+
+(defun sidekick--annotation-line-break (&optional soft)
+  "Break the comment line as usual, keeping an annotation's tag.
+When point sits in an annotation's text, the line the break opens gets
+the same tag.  SOFT is passed on to the mode's own line breaker."
+  (comment-normalize-vars t)
+  (let* ((line (sidekick--annotation-line))
+         (tag (and line (>= (point) (plist-get line :text-beg))
+                   (plist-get line :tag))))
+    (funcall (or sidekick--orig-comment-line-break-function
+                 #'comment-indent-new-line)
+             soft)
+    (when (and tag (not (sidekick--annotation-line)))
+      (insert tag ": "))))
+
 ;;;###autoload
 (define-minor-mode sidekick-annotation-mode
   "Highlight the REQ:, ACK: and RESP: comments exchanged with claude.
 Each annotation gets a background (`sidekick-req-face',
-`sidekick-ack-face', `sidekick-resp-face') covering its whole lines."
+`sidekick-ack-face', `sidekick-resp-face') covering its whole lines.
+Filling one (\\[fill-paragraph]) and breaking its lines (auto-fill,
+\\[default-indent-new-line]) keep the tag on every line."
   :lighter nil
   :group 'sidekick
   (if sidekick-annotation-mode
       (progn
         (setq-local font-lock-multiline t)
-        (font-lock-add-keywords nil sidekick--annotation-keywords 'append))
-    (font-lock-remove-keywords nil sidekick--annotation-keywords))
+        (font-lock-add-keywords nil sidekick--annotation-keywords 'append)
+        (unless (eq fill-paragraph-function
+                    #'sidekick--annotation-fill-paragraph)
+          (setq sidekick--orig-fill-paragraph-function fill-paragraph-function)
+          (setq-local fill-paragraph-function
+                      #'sidekick--annotation-fill-paragraph))
+        (unless (eq comment-line-break-function
+                    #'sidekick--annotation-line-break)
+          (setq sidekick--orig-comment-line-break-function
+                comment-line-break-function)
+          (setq-local comment-line-break-function
+                      #'sidekick--annotation-line-break)))
+    (font-lock-remove-keywords nil sidekick--annotation-keywords)
+    (when (eq fill-paragraph-function #'sidekick--annotation-fill-paragraph)
+      (setq-local fill-paragraph-function
+                  sidekick--orig-fill-paragraph-function))
+    (when (eq comment-line-break-function #'sidekick--annotation-line-break)
+      (setq-local comment-line-break-function
+                  sidekick--orig-comment-line-break-function)))
   (font-lock-flush))
 
 (defun sidekick--annotation-mode-maybe ()
