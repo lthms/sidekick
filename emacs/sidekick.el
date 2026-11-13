@@ -1349,23 +1349,25 @@ short says so in the session buffer."
 ;; The conversation with claude happens in comments of the edited buffers: the
 ;; user's `REQ:' requests, claude's `ACK:' acknowledgements and its `RESP:'
 ;; replies.  Give each kind a background so the exchange stands out from the
-;; code around it.
+;; code around it.  The faces also inherit `default', so the text is drawn in
+;; the normal foreground: themes often dim comments, and a dim foreground on a
+;; tinted background becomes unreadable.
 
 (defface sidekick-req-face
-  '((((background dark)) :background "#1f2c47" :extend t)
-    (t :background "#dce7ff" :extend t))
+  '((((background dark)) :inherit default :background "#1f2c47" :extend t)
+    (t :inherit default :background "#dce7ff" :extend t))
   "Background of a `REQ:' comment, a request to claude."
   :group 'sidekick)
 
 (defface sidekick-ack-face
-  '((((background dark)) :background "#3a351c" :extend t)
-    (t :background "#fff3c4" :extend t))
+  '((((background dark)) :inherit default :background "#3a351c" :extend t)
+    (t :inherit default :background "#fff3c4" :extend t))
   "Background of an `ACK:' comment, claude acknowledging a request."
   :group 'sidekick)
 
 (defface sidekick-resp-face
-  '((((background dark)) :background "#1d3a25" :extend t)
-    (t :background "#d9f2dc" :extend t))
+  '((((background dark)) :inherit default :background "#1d3a25" :extend t)
+    (t :inherit default :background "#d9f2dc" :extend t))
   "Background of a `RESP:' comment, claude replying to a request."
   :group 'sidekick)
 
