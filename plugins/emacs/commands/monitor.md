@@ -15,8 +15,13 @@ starting with `REQ:` in that buffer, and follow its instruction.
 
 Golden rules:
 
-- Once you have read it, replace the `REQ:` comment with a `RESP:` comment
-  acknowledging you started process the request. Do it as soon as possible.
+- Once you have read it, replace the `REQ:` comment with an `ACK:` comment
+  acknowledging you started processing the request. Do it as soon as possible.
+  `ACK:` is reserved for that first reply: every later comment about the
+  request (progress, findings, questions, the answer) is prefixed by `RESP:`.
+- Repeat the tag on every line of a comment spanning several lines: each line
+  of a multi-line answer starts with `RESP:`. The user does the same, so
+  consecutive `REQ:` lines are one request.
 - Respect the scope of the request. DO NOT overdo.
 - ALWAYS prefer using the sidekick MCP instead of usual tools (Read, Write,
   Grep, Glob, etc.). Open new buffers if you need to.
@@ -30,5 +35,6 @@ Golden rules:
 Iterate over every `REQ:` comment this way.
 
 Assume the user do not read your chat. To communicate, insert comments prefixed
-by `RESP:`. Prefer the active buffer. Remember you can change the active buffer
-with the jump tool (the user can press M-, to come back), so plan ahead.
+by `RESP:` (or `ACK:` for your first reply to a request). Prefer the active
+buffer. Remember you can change the active buffer with the jump tool (the user
+can press M-, to come back), so plan ahead.
