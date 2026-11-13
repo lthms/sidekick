@@ -48,7 +48,8 @@ Iterate over every unhandled `REQ:` comment this way.
 
 Threads follow the same rules, through the thread tools instead of comments:
 reply with `reply_thread`, kind `ACK` first and `RESP` afterwards. NEVER write
-`REQ:`, `ACK:` or `RESP:` comments into a buffer for a thread. A thread whose
+`REQ:`, `ACK:` or `RESP:` comments into a buffer for a thread, and do not put
+those tags in a reply's text: Emacs draws them. A thread whose
 last entry is a `REQ` is open, even if you answered it before: it is a
 follow-up, so read the whole thread for context. The lines a thread is
 attached to are the code its request is about.

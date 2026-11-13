@@ -323,6 +323,7 @@ opens a new thread over the current line.  Then notifies claude, unless
 ;;;###autoload
 (defun sidekick-thread-materialize (thread)
   "Write THREAD into the buffer as REQ:/ACK:/RESP: comments, then drop it.
+Each line of an entry gets the entry's tag.
 Use it to keep a thread in the file -- threads otherwise vanish with
 their buffer."
   (interactive (list (sidekick-thread--read-thread "Materialize thread: ")))
@@ -332,14 +333,10 @@ their buffer."
       (beginning-of-line)
       (let ((indent (current-indentation))
             (beg (point)))
+        ;; Every line carries its tag, as `sidekick-request' writes them.
         (dolist (e (sidekick-thread--entries thread))
-          (let ((tag (concat (car e) ": ")))
-            (insert (make-string indent ?\s) tag
-                    (replace-regexp-in-string
-                     "\n"
-                     (concat "\n" (make-string (+ indent (length tag)) ?\s))
-                     (cdr e))
-                    "\n")))
+          (dolist (line (split-string (cdr e) "\n"))
+            (insert (make-string indent ?\s) (car e) ": " line "\n")))
         (comment-normalize-vars t)
         (when comment-start
           (comment-region beg (point)))))
