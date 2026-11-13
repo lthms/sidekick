@@ -47,7 +47,8 @@ etc.).
 Install `emacs@sidekick` (see above), load the Emacs plugin (see
 `emacs/sidekick.el`), then run `M-x sidekick-setup`.
 
-After leaving a comment starting with `REQ:`, you can use `M-x sidekick-notify`
-to nudge the background Claude session to read it. Sidekick exposes the same
+`M-x sidekick-request` (`q` in `sidekick-command-map`) turns the selected text,
+or the current line, into a `REQ:` comment. After leaving a comment starting
+with `REQ:`, you can use `M-x sidekick-notify` to nudge the background Claude session to read it. Sidekick exposes the same
 MCP server, plus a few Emacs-native tools (`xref`-based definition/reference
 lookup and buffer diagnostics).

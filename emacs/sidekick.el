@@ -15,6 +15,7 @@
 ;;; Code:
 
 (require 'json)
+(require 'newcomment)
 (require 'let-alist)
 (require 'pulse)
 (require 'seq)
@@ -1259,6 +1260,52 @@ selecting code before invoking sends that snippet and its location along."
           (sidekick--send-user-message proc text))
         (message "sidekick: sent prompt to %s" (sidekick--project-name root))))))
 
+(defconst sidekick-request-prefix "REQ: "
+  "Marker opening a request comment that claude looks for in a buffer.")
+
+;;;###autoload
+(defun sidekick-request (beg end)
+  "Turn the text from BEG to END into a `REQ:' comment for claude.
+Interactively, BEG and END delimit the active region, or the current line
+when no region is active.  Comments the text out with the buffer's comment
+syntax unless it already is a comment, then puts `sidekick-request-prefix'
+right after the comment starter of each non-blank line, so every line of
+the request carries the tag `sidekick-notify' then points claude at.  On a
+blank line, opens a fresh `REQ:' comment there and leaves point after it,
+ready for typing."
+  (interactive (if (use-region-p)
+                   (list (region-beginning) (region-end))
+                 (list (line-beginning-position) (line-end-position))))
+  (comment-normalize-vars t)
+  (if (string-blank-p (buffer-substring-no-properties beg end))
+      (progn
+        (goto-char beg)
+        (delete-horizontal-space)
+        (insert sidekick-request-prefix)
+        (when comment-start
+          (comment-region (line-beginning-position) (line-end-position))
+          (indent-according-to-mode)
+          (goto-char (line-beginning-position))
+          (search-forward sidekick-request-prefix (line-end-position))))
+    (let ((end (copy-marker end)))
+      (save-excursion
+        (goto-char beg)
+        (skip-chars-forward " \t\n" end)
+        (let ((first (line-beginning-position)))
+          (when (and comment-start (not (comment-only-p first end)))
+            (comment-region first end))
+          (goto-char first)
+          (while (< (point) end)
+            (unless (looking-at-p "[ \t]*$")
+              (skip-chars-forward " \t")
+              (when (and comment-start-skip (looking-at comment-start-skip))
+                (goto-char (match-end 0)))
+              (unless (looking-at-p (regexp-quote sidekick-request-prefix))
+                (insert sidekick-request-prefix)))
+            (forward-line 1))))
+      (set-marker end nil)))
+  (deactivate-mark))
+
 ;;;###autoload
 (defun sidekick-show-buffer ()
   "Pop to the claude session buffer for the current buffer's project.
@@ -1350,6 +1397,7 @@ then `C-c s p' runs `sidekick-prompt', `C-c s n' `sidekick-notify', etc."
   "B" #'sidekick-list-buffers
   "k" #'sidekick-kill-buffer
   "p" #'sidekick-prompt
+  "q" #'sidekick-request
   "n" #'sidekick-notify
   "s" #'sidekick-setup
   "r" #'sidekick-reset
