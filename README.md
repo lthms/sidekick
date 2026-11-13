@@ -51,3 +51,7 @@ After leaving a comment starting with `REQ:`, you can use `M-x sidekick-notify`
 to nudge the background Claude session to read it. Sidekick exposes the same
 MCP server, plus a few Emacs-native tools (`xref`-based definition/reference
 lookup and buffer diagnostics).
+
+Once a session starts, `global-sidekick-annotation-mode` gives `REQ:`, `ACK:`
+and `RESP:` comments a background color (customize `sidekick-req-face`,
+`sidekick-ack-face` and `sidekick-resp-face`).

@@ -197,6 +197,7 @@ its buffer.  RESUME-ID, when non-nil, resumes that past claude session."
                sidekick--sessions)
       (sidekick-mode-line-mode 1)
       (sidekick-report-mode 1)
+      (global-sidekick-annotation-mode 1)
       buffer)))
 
 ;;;###autoload
@@ -1335,6 +1336,111 @@ short says so in the session buffer."
           (term-send-string proc "\e")
         (sidekick--send-control-request proc "interrupt"))
       (message "sidekick: interrupt sent to %s" (sidekick--project-name root)))))
+
+;;; REQ:/ACK:/RESP: highlighting ----------------------------------------------
+
+;; The conversation with claude happens in comments of the edited buffers: the
+;; user's `REQ:' requests, claude's `ACK:' acknowledgements and its `RESP:'
+;; replies.  Give each kind a background so the exchange stands out from the
+;; code around it.  The faces also inherit `default', so the text is drawn in
+;; the normal foreground: themes often dim comments, and a dim foreground on a
+;; tinted background becomes unreadable.
+
+(defface sidekick-req-face
+  '((((background dark)) :inherit default :background "#1f2c47" :extend t)
+    (t :inherit default :background "#dce7ff" :extend t))
+  "Background of a `REQ:' comment, a request to claude."
+  :group 'sidekick)
+
+(defface sidekick-ack-face
+  '((((background dark)) :inherit default :background "#3a351c" :extend t)
+    (t :inherit default :background "#fff3c4" :extend t))
+  "Background of an `ACK:' comment, claude acknowledging a request."
+  :group 'sidekick)
+
+(defface sidekick-resp-face
+  '((((background dark)) :inherit default :background "#1d3a25" :extend t)
+    (t :inherit default :background "#d9f2dc" :extend t))
+  "Background of a `RESP:' comment, claude replying to a request."
+  :group 'sidekick)
+
+(defconst sidekick--annotation-regexp "\\_<\\(REQ\\|ACK\\|RESP\\):"
+  "Regexp matching a sidekick annotation tag; group 1 is the tag name.")
+
+(defun sidekick--annotation-face (tag)
+  "The face highlighting an annotation tagged TAG."
+  (pcase tag
+    ("REQ" 'sidekick-req-face)
+    ("ACK" 'sidekick-ack-face)
+    (_ 'sidekick-resp-face)))
+
+(defun sidekick--comment-line-p ()
+  "Non-nil if the line at point holds a comment and nothing else."
+  (save-excursion
+    (back-to-indentation)
+    (and (not (eolp))
+         (or (nth 4 (syntax-ppss))
+             (and comment-start-skip (looking-at comment-start-skip))))))
+
+(defun sidekick--annotation-matcher (limit)
+  "Font-lock matcher for the next annotation before LIMIT.
+A tag counts when it sits in a comment, or starts its line (for buffers
+without comment syntax), so strings mentioning it are left alone.  Match 0
+spans the annotation's lines -- the tag's own, then the comment-only lines
+continuing it up to the next tag -- newline included so the background
+reaches the window edge; match 1 is the tag."
+  (let (found)
+    (while (and (not found)
+                (re-search-forward sidekick--annotation-regexp limit t))
+      (let ((tag-beg (match-beginning 1))
+            (tag-end (match-end 1)))
+        (when (save-excursion
+                (save-match-data
+                  (or (nth 4 (syntax-ppss tag-beg))
+                      (progn (goto-char tag-beg)
+                             (skip-chars-backward " \t")
+                             (bolp)))))
+          (let ((beg (line-beginning-position)))
+            (forward-line 1)
+            (while (and (not (eobp))
+                        (sidekick--comment-line-p)
+                        (not (save-excursion
+                               (re-search-forward sidekick--annotation-regexp
+                                                  (line-end-position) t))))
+              (forward-line 1))
+            (set-match-data (list beg (point) tag-beg tag-end))
+            (setq found t)))))
+    found))
+
+(defconst sidekick--annotation-keywords
+  '((sidekick--annotation-matcher
+     (0 (sidekick--annotation-face (match-string 1)) prepend)
+     (1 'bold prepend)))
+  "Font-lock keywords added by `sidekick-annotation-mode'.")
+
+;;;###autoload
+(define-minor-mode sidekick-annotation-mode
+  "Highlight the REQ:, ACK: and RESP: comments exchanged with claude.
+Each annotation gets a background (`sidekick-req-face',
+`sidekick-ack-face', `sidekick-resp-face') covering its whole lines."
+  :lighter nil
+  :group 'sidekick
+  (if sidekick-annotation-mode
+      (progn
+        (setq-local font-lock-multiline t)
+        (font-lock-add-keywords nil sidekick--annotation-keywords 'append))
+    (font-lock-remove-keywords nil sidekick--annotation-keywords))
+  (font-lock-flush))
+
+(defun sidekick--annotation-mode-maybe ()
+  "Turn on `sidekick-annotation-mode' in buffers a user edits."
+  (unless (or (minibufferp) (derived-mode-p 'special-mode))
+    (sidekick-annotation-mode 1)))
+
+;;;###autoload
+(define-globalized-minor-mode global-sidekick-annotation-mode
+  sidekick-annotation-mode sidekick--annotation-mode-maybe
+  :group 'sidekick)
 
 ;;; Keybindings ----------------------------------------------------------------
 
