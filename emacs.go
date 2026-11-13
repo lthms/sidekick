@@ -65,6 +65,10 @@ type emacsRequest struct {
 	EndCol  int    `json:"endCol"`
 	Kind    string `json:"kind"`
 	Name    string `json:"name"`
+	// threads: Thread is a thread id, Text a thread entry's text; Kind is
+	// reused for the entry's kind (ACK or RESP).
+	Thread int    `json:"thread"`
+	Text   string `json:"text"`
 }
 
 type emacsBuf struct {
@@ -627,6 +631,105 @@ func (self *EmacsMCPServer) codeActions(_ context.Context, _ *mcp.CallToolReques
 	return textResult(strings.Join(out, "\n")), nil, nil
 }
 
+// emacsThread is a request thread: notes drawn over a range of buffer lines
+// without being written into it (see emacs/sidekick-thread.el).
+type emacsThread struct {
+	ID      int    `json:"id"`
+	Buf     string `json:"buf"`
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	EndLine int    `json:"endLine"`
+	Status  string `json:"status"`
+	Entries []struct {
+		Kind string `json:"kind"`
+		Text string `json:"text"`
+	} `json:"entries"`
+}
+
+type EmacsListThreadsInput struct {
+	Buffer string `json:"buffer,omitempty" jsonschema:"only list this emacs buffer's threads; omit for every buffer of the project"`
+	All    bool   `json:"all,omitempty" jsonschema:"also list threads already acknowledged or answered; by default only open ones (whose last entry is an unanswered REQ) are listed"`
+}
+
+func (self *EmacsMCPServer) listThreads(_ context.Context, _ *mcp.CallToolRequest, in EmacsListThreadsInput) (*mcp.CallToolResult, any, error) {
+	var resp struct {
+		Threads []emacsThread `json:"threads"`
+	}
+	if err := self.call(emacsRequest{Op: "list-threads"}, &resp); err != nil {
+		return nil, nil, fmt.Errorf("list threads: %w", err)
+	}
+
+	root, _ := self.cwd()
+	var b strings.Builder
+	for _, t := range resp.Threads {
+		if in.Buffer != "" && t.Buf != in.Buffer {
+			continue
+		}
+		if !in.All && t.Status != "open" {
+			continue
+		}
+		// A shared Emacs holds every project's buffers; skip threads on files
+		// outside this session's project, as openBuffers does.
+		if root != "" && t.File != "" {
+			if rel, err := filepath.Rel(root, t.File); err != nil || strings.HasPrefix(rel, "..") {
+				continue
+			}
+		}
+		lines := fmt.Sprintf("%d", t.Line)
+		if t.EndLine != t.Line {
+			lines = fmt.Sprintf("%d-%d", t.Line, t.EndLine)
+		}
+		fmt.Fprintf(&b, "thread %d\t%s:%s\t%s\n", t.ID, t.Buf, lines, t.Status)
+		for _, e := range t.Entries {
+			text := strings.ReplaceAll(e.Text, "\n", "\n    ")
+			fmt.Fprintf(&b, "  %s: %s\n", e.Kind, text)
+		}
+	}
+
+	if b.Len() == 0 {
+		if in.All {
+			return textResult("no threads"), nil, nil
+		}
+		return textResult("no open threads"), nil, nil
+	}
+	return textResult(b.String()), nil, nil
+}
+
+type EmacsReplyThreadInput struct {
+	Thread int    `json:"thread" jsonschema:"the id of the thread to reply on, as listed by list_threads"`
+	Kind   string `json:"kind" jsonschema:"ACK for your first reply acknowledging the request, RESP for every later one"`
+	Text   string `json:"text" jsonschema:"the reply; may span several lines"`
+}
+
+func (self *EmacsMCPServer) replyThread(_ context.Context, _ *mcp.CallToolRequest, in EmacsReplyThreadInput) (*mcp.CallToolResult, any, error) {
+	kind := strings.ToUpper(strings.TrimSuffix(strings.TrimSpace(in.Kind), ":"))
+	if err := self.call(emacsRequest{Op: "reply-thread", Thread: in.Thread, Kind: kind, Text: in.Text}, nil); err != nil {
+		return nil, nil, fmt.Errorf("reply on thread %d: %w", in.Thread, err)
+	}
+	return textResult(fmt.Sprintf("replied %s on thread %d", kind, in.Thread)), nil, nil
+}
+
+type EmacsNewThreadInput struct {
+	Buffer  string `json:"buffer" jsonschema:"the emacs buffer name to attach the thread to"`
+	Line    int    `json:"line" jsonschema:"1-based first line the thread is about; it is drawn above it"`
+	EndLine *int   `json:"end_line,omitempty" jsonschema:"1-based last line the thread is about; defaults to line"`
+	Text    string `json:"text" jsonschema:"what to tell the user; may span several lines"`
+}
+
+func (self *EmacsMCPServer) newThread(_ context.Context, _ *mcp.CallToolRequest, in EmacsNewThreadInput) (*mcp.CallToolResult, any, error) {
+	req := emacsRequest{Op: "new-thread", Buf: in.Buffer, Line: in.Line, Text: in.Text}
+	if in.EndLine != nil {
+		req.EndLine = *in.EndLine
+	}
+	var resp struct {
+		Thread int `json:"thread"`
+	}
+	if err := self.call(req, &resp); err != nil {
+		return nil, nil, fmt.Errorf("new thread in %s: %w", in.Buffer, err)
+	}
+	return textResult(fmt.Sprintf("opened thread %d in %s at line %d", resp.Thread, in.Buffer, in.Line)), nil, nil
+}
+
 func (self *EmacsMCPServer) Kind() SupportedApp {
 	return Emacs
 }
@@ -707,6 +810,21 @@ func (self *EmacsMCPServer) NewMCPServer() *mcp.Server {
 		Description: "List or apply the language server's code actions (quick fixes, organize imports, extract/inline refactorings, …) at a buffer location or over a line range, through the buffer's LSP client (eglot or lsp-mode). Without apply, returns one action per line: its title, then a tab and its [kind] and (preferred) annotations; repeated titles are numbered (\"Title <2>\"). With apply set to one of those titles, executes it as the client's own code-action command would. Without a range, the request covers any diagnostics at line:column, so quick fixes for them are offered. Fails when no LSP client manages the buffer. Edits are left unsaved; the result lists the modified buffers.",
 	}, self.codeActions)
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "list_threads",
+		Description: "List the request threads the user left in Emacs. A thread is a conversation attached to a range of buffer lines and drawn above them, without being part of the buffer's text (read_buffer and grep never see it). Each thread is listed as \"thread ID<TAB>buffer:lines<TAB>status\" followed by its entries in order: the user's REQ requests and your ACK/RESP replies. Status is open (last entry is an unanswered REQ), acknowledged or answered. By default only open threads are listed.",
+	}, self.listThreads)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "reply_thread",
+		Description: "Reply on a request thread (see list_threads). Use kind ACK for your first reply to a REQ, as soon as you start on it, and RESP for everything after (progress, findings, questions, the answer). The reply is drawn in Emacs under the earlier entries; nothing is written into the buffer.",
+	}, self.replyThread)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "new_thread",
+		Description: "Open a thread holding a RESP note above a range of buffer lines, to tell the user something about that code without writing a comment into the buffer. Returns the new thread's id; the user can reply on it with a follow-up REQ.",
+	}, self.newThread)
+
 	return server
 }
 
@@ -717,6 +835,9 @@ type EmacsNotifyParams struct {
 	// "FILE:beg-end" plus the fenced snippet (see sidekick--region-context),
 	// or empty when nothing was selected. Re-broadcast verbatim on /listen.
 	Region string `json:"region,omitempty"`
+	// Thread is the id of the request thread to handle (see list_threads),
+	// or 0 when the user pointed at a REQ: comment instead.
+	Thread int `json:"thread,omitempty"`
 }
 
 func (self *EmacsMCPServer) UnmarshalNotifyJSONParams(data []byte) (any, error) {

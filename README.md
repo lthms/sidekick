@@ -51,3 +51,20 @@ After leaving a comment starting with `REQ:`, you can use `M-x sidekick-notify`
 to nudge the background Claude session to read it. Sidekick exposes the same
 MCP server, plus a few Emacs-native tools (`xref`-based definition/reference
 lookup and buffer diagnostics).
+
+Once a session starts, `global-sidekick-annotation-mode` gives `REQ:`, `ACK:`
+and `RESP:` comments a background color (customize `sidekick-req-face`,
+`sidekick-ack-face` and `sidekick-resp-face`).
+
+Requests can also be *threads*, kept out of the file: `M-x sidekick-thread-add`
+(`a` in `sidekick-command-map`) asks Claude about the selected lines, or the
+current one, and draws the request above them, followed by Claude's
+`ACK:`/`RESP:` replies as they arrive. Nothing is written into the buffer, so
+threads are never saved and vanish with their buffer;
+`sidekick-thread-materialize` (`m`) turns one into comments to keep it. Asking
+again on a thread's lines adds a follow-up. `]`/`[` move between threads, `l`
+lists them all, `t` collapses them to one line each, `x` resolves (deletes) the
+one at point and `X` all of the buffer's (every buffer's with `C-u`). Threads
+are drawn over the code, so point cannot enter them: `v` shows the one at point
+as plain text in a window, where it can be selected, copied, searched and
+followed up.
