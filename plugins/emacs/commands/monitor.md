@@ -10,8 +10,15 @@ while true; do curl -sN $1/listen/$2 || true; sleep 1; done
 
 This will give you one event per line, everytime i ping you from emacs.
 
-The event gives you a buffer name (the `buf` field). Search for the comment
-starting with `REQ:` in that buffer, and follow its instruction.
+The user leaves requests in two forms:
+
+- `REQ:` comments written in a buffer. The event gives you that buffer's name
+  (the `buf` field): search it for the comment starting with `REQ:`, and
+  follow its instruction.
+- Threads: requests attached to lines but drawn above them rather than written
+  into the buffer, so `read_buffer` and `grep` never see them. When the event
+  has a `thread` field, that thread holds the request. On every event, call
+  `list_threads` too, and handle each open thread it lists.
 
 Golden rules:
 
@@ -36,7 +43,16 @@ Golden rules:
 
 Iterate over every unhandled `REQ:` comment this way.
 
+Threads follow the same rules, through the thread tools instead of comments:
+reply with `reply_thread`, kind `ACK` first and `RESP` afterwards. NEVER write
+`REQ:`, `ACK:` or `RESP:` comments into a buffer for a thread. A thread whose
+last entry is a `REQ` is open, even if you answered it before: it is a
+follow-up, so read the whole thread for context. The lines a thread is
+attached to are the code its request is about.
+
 Assume the user do not read your chat. To communicate, insert comments prefixed
-by `RESP:` (or `ACK:` for your first reply to a request). Prefer the active
-buffer. Remember you can change the active buffer with the jump tool (the user
+by `RESP:` (or `ACK:` for your first reply to a request) when answering a
+`REQ:` comment, reply on the thread when answering a thread, and otherwise
+open a thread with `new_thread` rather than writing a comment. Prefer the
+active buffer. Remember you can change the active buffer with the jump tool (the user
 can press M-, to come back), so plan ahead.

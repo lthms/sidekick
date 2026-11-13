@@ -29,6 +29,7 @@
 (add-to-list 'load-path
              (file-name-directory (or load-file-name buffer-file-name)))
 (require 'sidekick-render)
+(require 'sidekick-thread)
 
 ;; Diagnostics come from whichever checker the user runs; declare the accessors
 ;; so byte-compilation stays quiet without loading flymake or the third-party
@@ -544,7 +545,7 @@ via claude's `--resume'."
     buffer))
 
 ;;;###autoload
-(defun sidekick-notify (&optional context)
+(defun sidekick-notify (&optional context thread)
   "Notify the current buffer's project session about the current buffer.
 The buffer is routed to the claude session whose project contains it, so
 the right session hears about it when several are running.
@@ -552,7 +553,8 @@ the right session hears about it when several are running.
 CONTEXT, when non-nil, is sent alongside the buffer name -- called
 interactively it is the active region (see `sidekick--region-context'), so
 selecting code before invoking points the session at that snippet and its
-location, mirroring `sidekick-prompt'."
+location, mirroring `sidekick-prompt'.  THREAD, when non-nil, is the id of
+the thread holding the request to handle (see `sidekick-thread-add')."
   (interactive (list (sidekick--region-context)))
   (let* ((root (sidekick--project-root))
          (session (gethash root sidekick--sessions)))
@@ -564,6 +566,7 @@ location, mirroring `sidekick-prompt'."
        `((buf . ,(buffer-name))
          (file . ,(or (buffer-file-name) ""))
          (region . ,(or context ""))
+         ,@(when thread `((thread . ,thread)))
          (pid . ,(plist-get session :id))))
       (message "Notification sent to Claude"))))
 
@@ -614,6 +617,10 @@ location, mirroring `sidekick-prompt'."
       ("code-actions"
        `((actions . ,(sidekick--code-actions .buf .line .col .endLine .endCol
                                              .kind))))
+      ("list-threads" `((threads . ,(sidekick-thread--describe-all))))
+      ("reply-thread" (sidekick-thread--reply .thread .kind .text) '((ok . t)))
+      ("new-thread"
+       `((thread . ,(sidekick-thread--new .buf .line .endLine .text))))
       ("apply-code-action"
        `((buffers . ,(sidekick--apply-code-action .buf .line .col .endLine
                                                   .endCol .kind .name))))
@@ -1458,7 +1465,14 @@ then `C-c s p' runs `sidekick-prompt', `C-c s n' `sidekick-notify', etc."
   "s" #'sidekick-setup
   "r" #'sidekick-reset
   "i" #'sidekick-interrupt
-  "R" #'sidekick-resume)
+  "R" #'sidekick-resume
+  "a" #'sidekick-thread-add
+  "x" #'sidekick-thread-resolve
+  "]" #'sidekick-thread-next
+  "[" #'sidekick-thread-previous
+  "t" #'sidekick-thread-toggle
+  "l" #'sidekick-thread-list
+  "m" #'sidekick-thread-materialize)
 
 ;; Make the prefix reachable as a command so `C-c s' echoes its bindings.
 ;;;###autoload (autoload 'sidekick-command-prefix "sidekick" nil t 'keymap)

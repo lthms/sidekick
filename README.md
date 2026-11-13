@@ -55,3 +55,13 @@ lookup and buffer diagnostics).
 Once a session starts, `global-sidekick-annotation-mode` gives `REQ:`, `ACK:`
 and `RESP:` comments a background color (customize `sidekick-req-face`,
 `sidekick-ack-face` and `sidekick-resp-face`).
+
+Requests can also be *threads*, kept out of the file: `M-x sidekick-thread-add`
+(`a` in `sidekick-command-map`) asks Claude about the selected lines, or the
+current one, and draws the request above them, followed by Claude's
+`ACK:`/`RESP:` replies as they arrive. Nothing is written into the buffer, so
+threads are never saved and vanish with their buffer;
+`sidekick-thread-materialize` (`m`) turns one into comments to keep it. Asking
+again on a thread's lines adds a follow-up. `]`/`[` move between threads, `l`
+lists them all, `t` collapses them to one line each and `x` resolves (deletes)
+one.
