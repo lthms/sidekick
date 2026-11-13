@@ -27,6 +27,9 @@ Golden rules:
   possible. `ACK:` is reserved for that first reply: every later comment about
   the request (progress, findings, questions, the answer) is prefixed by
   `RESP:`.
+- Repeat the tag on every line of a comment spanning several lines: each line
+  of a multi-line answer starts with `RESP:`. The user does the same, so
+  consecutive `REQ:` lines are one request.
 - NEVER delete or edit a `REQ:` comment: it stays in the buffer as the record
   of what was asked, and your replies go below it.
 - A `REQ:` comment already followed by an `ACK:` or `RESP:` comment has been
