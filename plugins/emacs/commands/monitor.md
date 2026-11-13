@@ -15,10 +15,15 @@ starting with `REQ:` in that buffer, and follow its instruction.
 
 Golden rules:
 
-- Once you have read it, replace the `REQ:` comment with an `ACK:` comment
-  acknowledging you started processing the request. Do it as soon as possible.
-  `ACK:` is reserved for that first reply: every later comment about the
-  request (progress, findings, questions, the answer) is prefixed by `RESP:`.
+- Once you have read it, insert an `ACK:` comment right below the `REQ:`
+  comment, acknowledging you started processing the request. Do it as soon as
+  possible. `ACK:` is reserved for that first reply: every later comment about
+  the request (progress, findings, questions, the answer) is prefixed by
+  `RESP:`.
+- NEVER delete or edit a `REQ:` comment: it stays in the buffer as the record
+  of what was asked, and your replies go below it.
+- A `REQ:` comment already followed by an `ACK:` or `RESP:` comment has been
+  handled before: skip it.
 - Respect the scope of the request. DO NOT overdo.
 - ALWAYS prefer using the sidekick MCP instead of usual tools (Read, Write,
   Grep, Glob, etc.). Open new buffers if you need to.
@@ -29,7 +34,7 @@ Golden rules:
 - Rename with `rename_symbol` and use `code_actions` for fixes and
   refactorings rather than hand-editing every site.
 
-Iterate over every `REQ:` comment this way.
+Iterate over every unhandled `REQ:` comment this way.
 
 Assume the user do not read your chat. To communicate, insert comments prefixed
 by `RESP:` (or `ACK:` for your first reply to a request). Prefer the active
