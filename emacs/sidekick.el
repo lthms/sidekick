@@ -1470,6 +1470,8 @@ then `C-c s p' runs `sidekick-prompt', `C-c s n' `sidekick-notify', etc."
   "R" #'sidekick-resume
   "a" #'sidekick-thread-add
   "x" #'sidekick-thread-resolve
+  "X" #'sidekick-thread-resolve-all
+  "v" #'sidekick-thread-view
   "]" #'sidekick-thread-next
   "[" #'sidekick-thread-previous
   "t" #'sidekick-thread-toggle

@@ -44,6 +44,9 @@ When nil, notify it yourself with `sidekick-notify'."
 (defvar-local sidekick-thread--collapsed nil
   "Non-nil when this buffer's threads show only their first line.")
 
+(defvar-local sidekick-thread-view--thread nil
+  "The thread (overlay) this view buffer shows.")
+
 (defconst sidekick-thread--kinds '("REQ" "ACK" "RESP")
   "Kinds of thread entries: the user's requests, claude's replies.")
 
@@ -107,7 +110,8 @@ When nil, notify it yourself with `sidekick-notify'."
   (overlay-put ov 'sidekick-thread-entries
                (append (sidekick-thread--entries ov)
                        (list (cons kind (string-trim text)))))
-  (sidekick-thread--render ov))
+  (sidekick-thread--render ov)
+  (sidekick-thread--refresh-views ov))
 
 (defun sidekick-thread--status (ov)
   "OV's status: \"open\" while its last entry is an unanswered request."
@@ -256,9 +260,15 @@ opens a new thread over the current line.  Then notifies claude, unless
                 (sidekick-thread--make (region-beginning) (region-end))
               (or (sidekick-thread--at-point)
                   (sidekick-thread--make (point) (point))))))
-    (sidekick-thread--add-entry ov "REQ" text)
     (deactivate-mark)
-    (when sidekick-thread-notify
+    (sidekick-thread--request ov text)))
+
+(defun sidekick-thread--request (ov text)
+  "Add the user's request TEXT to thread OV, then notify claude.
+Claude is notified unless `sidekick-thread-notify' is nil."
+  (sidekick-thread--add-entry ov "REQ" text)
+  (when sidekick-thread-notify
+    (with-current-buffer (overlay-buffer ov)
       (sidekick-notify nil (overlay-get ov 'sidekick-thread)))))
 
 ;;;###autoload
@@ -267,7 +277,34 @@ opens a new thread over the current line.  Then notifies claude, unless
   (interactive (list (sidekick-thread--read-thread "Resolve thread: ")))
   (let ((id (overlay-get thread 'sidekick-thread)))
     (delete-overlay thread)
+    (sidekick-thread--refresh-views thread)
     (message "sidekick: resolved thread #%d" id)))
+
+;;;###autoload
+(defun sidekick-thread-resolve-all (&optional everywhere)
+  "Delete every thread of the current buffer, after confirmation.
+From a thread view, that is the viewed thread's buffer.  With a prefix
+argument EVERYWHERE, delete the threads of every buffer."
+  (interactive "P")
+  (let ((threads (cond
+                  (everywhere (sidekick-thread--all))
+                  ((and (derived-mode-p 'sidekick-thread-view-mode)
+                        (overlay-buffer sidekick-thread-view--thread))
+                   (sidekick-thread--overlays
+                    (overlay-buffer sidekick-thread-view--thread)))
+                  (t (sidekick-thread--overlays)))))
+    (cond
+     ((null threads)
+      (message "sidekick: no thread to resolve"))
+     ((y-or-n-p (format "Resolve %d thread%s%s? "
+                        (length threads)
+                        (if (cdr threads) "s" "")
+                        (if everywhere " in every buffer" "")))
+      (dolist (ov threads)
+        (delete-overlay ov)
+        (sidekick-thread--refresh-views ov))
+      (message "sidekick: resolved %d thread%s"
+               (length threads) (if (cdr threads) "s" ""))))))
 
 ;;;###autoload
 (defun sidekick-thread-next (&optional n)
@@ -340,7 +377,180 @@ their buffer."
         (comment-normalize-vars t)
         (when comment-start
           (comment-region beg (point)))))
-    (delete-overlay thread)))
+    (delete-overlay thread)
+    (sidekick-thread--refresh-views thread)))
+
+;;; Thread view ----------------------------------------------------------------
+
+;; A thread drawn over the code cannot be entered: point skips it, so its text
+;; cannot be selected, copied or searched.  The thread view shows one thread
+;; as plain read-only text in its own buffer, kept up to date as entries come
+;; in, from which the user can also follow up, copy an entry or resolve it.
+
+(defconst sidekick-thread-view-buffer "*sidekick-thread*"
+  "Name of the buffer showing a thread with `sidekick-thread-view'.")
+
+(defcustom sidekick-thread-view-context-lines 15
+  "Most lines of the thread's code `sidekick-thread-view' shows above it."
+  :type 'natnum
+  :group 'sidekick)
+
+(defvar-keymap sidekick-thread-view-mode-map
+  :doc "Keymap for `sidekick-thread-view-mode'."
+  "g" #'sidekick-thread-view-refresh
+  "a" #'sidekick-thread-view-follow-up
+  "r" #'sidekick-thread-view-follow-up
+  "w" #'sidekick-thread-view-copy
+  "RET" #'sidekick-thread-view-goto
+  "j" #'sidekick-thread-view-goto
+  "n" #'sidekick-thread-view-next
+  "p" #'sidekick-thread-view-previous
+  "x" #'sidekick-thread-view-resolve
+  "m" #'sidekick-thread-view-materialize)
+
+(define-derived-mode sidekick-thread-view-mode special-mode "Thread"
+  "Major mode showing a sidekick thread as plain, read-only text.
+From the view, add a follow-up request, copy an entry, go to the
+thread's code, move to the next or previous thread of that buffer,
+resolve the thread or write it into the code as comments.
+
+\\{sidekick-thread-view-mode-map}"
+  (setq-local truncate-lines nil)
+  (setq-local word-wrap t))
+
+(defun sidekick-thread--view-thread ()
+  "The live thread the current view buffer shows, or a user error."
+  (let ((ov sidekick-thread-view--thread))
+    (unless (and ov (overlay-buffer ov))
+      (user-error "This thread is resolved"))
+    ov))
+
+(defun sidekick-thread--refresh-views (ov)
+  "Redraw the view buffers showing thread OV."
+  (dolist (b (buffer-list))
+    (when (eq (buffer-local-value 'sidekick-thread-view--thread b) ov)
+      (with-current-buffer b (sidekick-thread-view-refresh)))))
+
+(defun sidekick-thread-view-refresh ()
+  "Redraw the current thread view, keeping point where it was."
+  (interactive)
+  (let* ((inhibit-read-only t)
+         (ov sidekick-thread-view--thread)
+         (pt (point))
+         (at-end (eobp)))
+    (erase-buffer)
+    (if (not (and ov (overlay-buffer ov)))
+        (insert (propertize (format "Thread #%s is resolved.\n"
+                                    (and ov (overlay-get ov 'sidekick-thread)))
+                            'face 'shadow))
+      (let* ((src (overlay-buffer ov))
+             (desc (sidekick-thread--describe ov))
+             (line (alist-get 'line desc))
+             (end-line (alist-get 'endLine desc))
+             (code (with-current-buffer src
+                     (save-restriction
+                       (widen)
+                       (buffer-substring-no-properties
+                        (save-excursion (goto-char (overlay-start ov))
+                                        (line-beginning-position))
+                        (save-excursion (goto-char (overlay-end ov))
+                                        (line-end-position))))))
+             (code-lines (split-string code "\n")))
+        (insert (propertize
+                 (format "Thread #%d  %s:%s  [%s]\n"
+                         (overlay-get ov 'sidekick-thread) (buffer-name src)
+                         (if (= line end-line) line
+                           (format "%d-%d" line end-line))
+                         (alist-get 'status desc))
+                 'face 'bold)
+                "\n")
+        (dolist (l (seq-take code-lines sidekick-thread-view-context-lines))
+          (insert (propertize (concat "  " l "\n") 'face 'shadow)))
+        (when (> (length code-lines) sidekick-thread-view-context-lines)
+          (insert (propertize "  …\n" 'face 'shadow)))
+        (let ((i 0))
+          (dolist (e (sidekick-thread--entries ov))
+            (insert "\n")
+            (let ((beg (point)))
+              (insert (sidekick-thread--entry-string (car e) (cdr e) 0))
+              (put-text-property beg (point) 'sidekick-thread-entry i))
+            (setq i (1+ i))))))
+    (goto-char (if at-end (point-max) (min pt (point-max))))))
+
+;;;###autoload
+(defun sidekick-thread-view (thread)
+  "Show THREAD (the one at point, or one picked) as plain text in a window.
+Unlike the thread drawn over the code, its text can be moved through,
+selected, copied and searched.  The view follows the thread as entries
+come in."
+  (interactive (list (sidekick-thread--read-thread "View thread: ")))
+  (let ((buffer (get-buffer-create sidekick-thread-view-buffer)))
+    (with-current-buffer buffer
+      (unless (derived-mode-p 'sidekick-thread-view-mode)
+        (sidekick-thread-view-mode))
+      (setq sidekick-thread-view--thread thread)
+      (sidekick-thread-view-refresh)
+      (goto-char (point-min)))
+    (pop-to-buffer buffer
+                   '((display-buffer-reuse-window display-buffer-below-selected)
+                     (window-height . (lambda (w)
+                                        (fit-window-to-buffer
+                                         w (/ (frame-height) 2) 8)))))))
+
+(defun sidekick-thread-view-follow-up (text)
+  "Add the follow-up request TEXT to the viewed thread and notify claude."
+  (interactive (progn (sidekick-thread--view-thread)
+                      (list (read-string "Follow-up request: "))))
+  (sidekick-thread--request (sidekick-thread--view-thread) text))
+
+(defun sidekick-thread-view-copy ()
+  "Copy the text of the entry at point (else the last entry), without its tag."
+  (interactive)
+  (let* ((entries (sidekick-thread--entries (sidekick-thread--view-thread)))
+         (i (or (get-text-property (point) 'sidekick-thread-entry)
+                (1- (length entries))))
+         (entry (nth i entries)))
+    (unless entry (user-error "This thread has no entry"))
+    (kill-new (cdr entry))
+    (message "sidekick: copied the %s entry" (car entry))))
+
+(defun sidekick-thread-view-goto ()
+  "Show the viewed thread's code in another window."
+  (interactive)
+  (let ((ov (sidekick-thread--view-thread)))
+    (pop-to-buffer (overlay-buffer ov))
+    (goto-char (overlay-start ov))))
+
+(defun sidekick-thread-view-next (&optional n)
+  "View the Nth next thread of the viewed thread's buffer (previous if N < 0)."
+  (interactive "p")
+  (let* ((ov (sidekick-thread--view-thread))
+         (threads (sidekick-thread--overlays (overlay-buffer ov)))
+         (i (+ (seq-position threads ov) (or n 1)))
+         (target (and (>= i 0) (nth i threads))))
+    (if target
+        (progn (setq sidekick-thread-view--thread target)
+               (sidekick-thread-view-refresh)
+               (goto-char (point-min)))
+      (user-error "No %s thread in %s" (if (> (or n 1) 0) "next" "previous")
+                  (buffer-name (overlay-buffer ov))))))
+
+(defun sidekick-thread-view-previous (&optional n)
+  "View the Nth previous thread of the viewed thread's buffer."
+  (interactive "p")
+  (sidekick-thread-view-next (- (or n 1))))
+
+(defun sidekick-thread-view-resolve ()
+  "Resolve the viewed thread and close its view."
+  (interactive)
+  (sidekick-thread-resolve (sidekick-thread--view-thread))
+  (quit-window))
+
+(defun sidekick-thread-view-materialize ()
+  "Write the viewed thread into its code as comments and close its view."
+  (interactive)
+  (sidekick-thread-materialize (sidekick-thread--view-thread))
+  (quit-window))
 
 (provide 'sidekick-thread)
 
