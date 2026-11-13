@@ -63,5 +63,8 @@ current one, and draws the request above them, followed by Claude's
 threads are never saved and vanish with their buffer;
 `sidekick-thread-materialize` (`m`) turns one into comments to keep it. Asking
 again on a thread's lines adds a follow-up. `]`/`[` move between threads, `l`
-lists them all, `t` collapses them to one line each and `x` resolves (deletes)
-one.
+lists them all, `t` collapses them to one line each, `x` resolves (deletes) the
+one at point and `X` all of the buffer's (every buffer's with `C-u`). Threads
+are drawn over the code, so point cannot enter them: `v` shows the one at point
+as plain text in a window, where it can be selected, copied, searched and
+followed up.
