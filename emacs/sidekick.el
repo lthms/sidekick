@@ -1269,9 +1269,10 @@ selecting code before invoking sends that snippet and its location along."
 Interactively, BEG and END delimit the active region, or the current line
 when no region is active.  Comments the text out with the buffer's comment
 syntax unless it already is a comment, then puts `sidekick-request-prefix'
-right after the comment starter of its first non-blank line -- which is
-what `sidekick-notify' then points claude at.  On a blank line, opens a
-fresh `REQ:' comment there and leaves point after it, ready for typing."
+right after the comment starter of each non-blank line, so every line of
+the request carries the tag `sidekick-notify' then points claude at.  On a
+blank line, opens a fresh `REQ:' comment there and leaves point after it,
+ready for typing."
   (interactive (if (use-region-p)
                    (list (region-beginning) (region-end))
                  (list (line-beginning-position) (line-end-position))))
@@ -1294,11 +1295,14 @@ fresh `REQ:' comment there and leaves point after it, ready for typing."
           (when (and comment-start (not (comment-only-p first end)))
             (comment-region first end))
           (goto-char first)
-          (skip-chars-forward " \t")
-          (when (and comment-start-skip (looking-at comment-start-skip))
-            (goto-char (match-end 0)))
-          (unless (looking-at-p (regexp-quote sidekick-request-prefix))
-            (insert sidekick-request-prefix))))
+          (while (< (point) end)
+            (unless (looking-at-p "[ \t]*$")
+              (skip-chars-forward " \t")
+              (when (and comment-start-skip (looking-at comment-start-skip))
+                (goto-char (match-end 0)))
+              (unless (looking-at-p (regexp-quote sidekick-request-prefix))
+                (insert sidekick-request-prefix)))
+            (forward-line 1))))
       (set-marker end nil)))
   (deactivate-mark))
 
